@@ -21,6 +21,7 @@
 - **負載平衡**：`upstream` 搭配 `least_conn` 或權重；後端掛掉時用 `max_fails` / `fail_timeout` 暫時移出。
 - **限流**：`limit_req_zone` 依來源 IP 限制請求速率，建立連結的 API 與轉址路徑分開設定，轉址的門檻較高。
 - **連線數限制**：`limit_conn` 限制單一 IP 的同時連線數。
+- **驗證**：限流門檻是否生效、後端被移出時流量是否轉到另一個，由 [loadtest](../../loadtest/README.md) 的限流驗證情境確認。
 - **快取轉址回應**：要統計點擊就不在 Nginx 快取 `302`，否則點擊不會到後端。
 
 ## Docker

@@ -9,6 +9,7 @@ Laravel 版的短網址 API。與 [services/go](../go/README.md) 實作同一份
 - **資料庫 schema 由誰管**：Laravel migration 與 Go 的 migration 工具只能選一個當權威，另一個只讀不改。
 - **快取的 key 格式與序列化**：Laravel 的 cache 預設會加前綴並用 PHP 序列化，Go 讀不懂；共用的 key 要用 JSON 與固定前綴。
 - **登入憑證**：見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)。
+- **壓測條件**：與 Go 版比較時用同一套情境與同樣的容器資源上限，見 [loadtest](../../loadtest/README.md)；PHP-FPM 的 worker 數會直接限制同時處理的請求數，要記錄在每次結果裡。
 - **短碼產生規則**：兩邊產生的短碼不能衝突，例如都由資料庫的序列號編碼，或都用同一套隨機長度與字元集並靠唯一索引擋重複。
 
 ## Docker

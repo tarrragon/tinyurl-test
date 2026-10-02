@@ -9,6 +9,8 @@ Go 版的短網址 API。與 [services/laravel](../laravel/README.md) 實作同�
 - `GET /api/stats/...`：給後台的點擊統計。
 - `GET /healthz`：給 Nginx 與容器編排做健康檢查。
 
+與 Laravel 版的效能比較在 [loadtest](../../loadtest/README.md)，兩邊用同一套情境、同樣的容器資源上限。
+
 ## 預定的目錄結構
 
 ```text

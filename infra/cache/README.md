@@ -31,7 +31,7 @@
 
 - 上表的用途裡，限流、點擊暫存與 Laravel queue 都需要 Memcached 沒有的資料結構；選 Memcached 就得再加一個 queue 服務。
 - Valkey 與 Redis 協定相同，Go 的 `go-redis`（或 `valkey-go`）與 Laravel 的 `phpredis` 都直接可用，兩者之後互換不必改程式。Valkey 的授權沒有限制，選它可以避開授權問題；想跟著官方文件走就選 Redis 8。
-- Dragonfly 適合之後當效能比較的練習：同一套程式換成 Dragonfly，用壓測比較兩者在轉址路徑上的差異。
+- Dragonfly 適合之後當效能比較的練習：同一套程式換成 Dragonfly，用 [loadtest](../../loadtest/README.md) 的轉址基準與爆紅連結情境比較兩者的差異。
 
 ## 要注意的地方
 
