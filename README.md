@@ -10,7 +10,7 @@
 - **連結用途**：簡訊（字數有限，連結越短越好）、Email、網路廣告。建立連結時標記管道與活動，後台才能依管道比較成效。
 - **轉址**：訪客點短網址，服務查出原始網址後回傳轉址。要統計點擊就用 `302`，因為 `301` 會被瀏覽器快取，第二次點擊不會再回到服務。
 - **登入**：前台與後台都要登入，角色不同看到的東西不同，見 [docs/auth-and-roles.md](docs/auth-and-roles.md)。
-- **壓測**：要知道轉址路徑的容量上限與瓶頸所在，並在同一套情境下比較 Go 與 Laravel、以及不同的快取伺服器；點擊數要和送出的請求數對得上。情境與指標見 [loadtest/README.md](loadtest/README.md)。
+- **壓測（伺服器能力評估）**：在練習用的機器上量出轉址路徑大概能承受多少流量、瓶頸在哪一層，並在同一套情境下比較 Go 與 Laravel、以及不同的快取伺服器；點擊數要和送出的請求數對得上。情境與指標見 [loadtest/README.md](loadtest/README.md)。
 
 ## 架構
 
@@ -60,4 +60,4 @@ docker compose up -d postgres cache   # 目前只有這兩個起得來
 - 前端框架：`web/` 的 Dockerfile 先假設「Node 建置出靜態檔、再由 Nginx 提供」，選定框架後調整。
 - Go 與 Laravel 兩個後端怎麼分流：依路徑分開，或放在同一個 upstream 輪流接，見 [infra/nginx/README.md](infra/nginx/README.md)。
 - 兩個後端共用的登入憑證格式，見 [docs/auth-and-roles.md](docs/auth-and-roles.md)。
-- 壓測工具與通過條件，見 [loadtest/README.md](loadtest/README.md)。
+- 壓測工具，見 [loadtest/README.md](loadtest/README.md)。
