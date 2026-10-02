@@ -50,7 +50,8 @@ JWT 簽出去之後，在到期前驗證都會通過，所以撤銷靠以下三�
 
 - access token 與 refresh token 都放在 `HttpOnly`、`Secure`、`SameSite=Strict` 的 cookie，前端的 JavaScript 讀不到，XSS 偷不走。
 - `Secure` 要求 HTTPS。瀏覽器把 `http://localhost` 視為安全來源而放行，但用虛擬機的 IP 以 HTTP 連線時 cookie 不會被設定，那時要讓 Nginx 提供自簽憑證的 HTTPS。
-- 前台、後台與 API 經由同一個 Nginx 對外，屬於同一個網域，cookie 會自動帶上。
+- 前台、後台與 API 都在 `APP_DOMAIN`，cookie 會自動帶上。
+- cookie **不設 `Domain` 屬性**，讓它只屬於設定它的那個主機名稱（host-only），短網域收不到。這一點不能只靠 `SameSite`：短網域與 `APP_DOMAIN` 若是同一個主網域下的子網域（例如 `s.shop.tw` 與 `app.shop.tw`），瀏覽器把兩者視為同站（same-site），`SameSite` 不會擋。
 - refresh token 的 cookie 把 `Path` 限制在換發 token 的端點（例如 `/api/auth/refresh`），其他請求不會帶上它。
 - `SameSite=Strict` 擋掉跨站請求帶 cookie；API 另外只接受 `Content-Type: application/json`，作為 CSRF 的第二層防護。
 
