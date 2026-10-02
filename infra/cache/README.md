@@ -1,6 +1,6 @@
 # infra/cache
 
-快取伺服器。`docker-compose.yml` 目前先放 Valkey，選定之後換映像檔即可，兩個後端連線的程式碼只要協定相容就不必改。
+快取伺服器，**選定 Valkey**（`valkey/valkey:8-alpine`）。以下保留選型時的比較；之後要換成 Redis 或 Dragonfly 做效能比較，只要換 `docker-compose.yml` 裡的映像檔，兩個後端的連線程式碼不必改。
 
 ## 這個服務要快取做什麼
 
@@ -13,6 +13,7 @@
 | 登入 session（若採用） | key-value 加過期，可主動刪除                      |
 | 點擊數的暫存與批次寫入 | 原子遞增，或用佇列 / stream 暫存點擊事件再批次寫進 PostgreSQL |
 | Laravel queue          | list 或 stream 資料結構                           |
+| JWT 撤銷清單           | key 加 TTL（TTL 等於 token 剩下的效期），見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md) |
 
 ## 選項
 
@@ -25,9 +26,7 @@
 | **Memcached** | Memcached 協定     | BSD                                    | 只有 key-value 與遞增，沒有 list / stream / pub-sub，也不持久化      |
 | **Garnet**    | RESP               | MIT                                    | Microsoft 以 .NET 實作，支援的指令是 Redis 的子集                    |
 
-## 建議
-
-**選 Valkey（或 Redis 8），先不選 Memcached。**
+## 選 Valkey 的理由
 
 - 上表的用途裡，限流、點擊暫存與 Laravel queue 都需要 Memcached 沒有的資料結構；選 Memcached 就得再加一個 queue 服務。
 - Valkey 與 Redis 協定相同，Go 的 `go-redis`（或 `valkey-go`）與 Laravel 的 `phpredis` 都直接可用，兩者之後互換不必改程式。Valkey 的授權沒有限制，選它可以避開授權問題；想跟著官方文件走就選 Redis 8。
