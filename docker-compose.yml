@@ -1,0 +1,69 @@
+# 程式碼還沒寫，目前只有 postgres 與 cache 起得來；
+# 其餘服務的 build 會因為缺少 go.mod / composer.json / package.json 而失敗。
+
+services:
+  nginx:
+    build: ./infra/nginx
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    depends_on:
+      - portal
+      - admin
+      - go
+      - laravel
+
+  portal:
+    build: ./web/portal
+
+  admin:
+    build: ./web/admin
+
+  go:
+    build: ./services/go
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      CACHE_ADDR: cache:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cache:
+        condition: service_started
+
+  laravel:
+    build: ./services/laravel
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: cache
+      REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cache:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 快取選型見 infra/cache/README.md；換成 Redis 只要改 image
+  cache:
+    image: valkey/valkey:8-alpine
+
+volumes:
+  pgdata:

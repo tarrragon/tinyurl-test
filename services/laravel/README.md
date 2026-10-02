@@ -1,0 +1,16 @@
+# services/laravel
+
+Laravel 版的短網址 API。與 [services/go](../go/README.md) 實作同一份 API 規格、連同一個資料庫與快取，負責的端點相同：轉址 `GET /{code}`、管理 API `/api/links`、統計 `/api/stats/...` 與健康檢查 `/healthz`。
+
+## 與 Go 版要對齊的地方
+
+兩個後端共用資料，所以下面幾件事要先約定好，不能各自用框架預設值：
+
+- **資料庫 schema 由誰管**：Laravel migration 與 Go 的 migration 工具只能選一個當權威，另一個只讀不改。
+- **快取的 key 格式與序列化**：Laravel 的 cache 預設會加前綴並用 PHP 序列化，Go 讀不懂；共用的 key 要用 JSON 與固定前綴。
+- **登入憑證**：見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)。
+- **短碼產生規則**：兩邊產生的短碼不能衝突，例如都由資料庫的序列號編碼，或都用同一套隨機長度與字元集並靠唯一索引擋重複。
+
+## Docker
+
+`php:8.4-fpm-alpine` 加上 `pdo_pgsql`、`redis`、`opcache` 擴充。PHP-FPM 只聽 FastCGI（port `9000`），HTTP 由 [infra/nginx](../../infra/nginx/README.md) 轉成 FastCGI 送進來。`composer install` 放在獨立階段，`composer.json` 沒變時可以沿用快取。

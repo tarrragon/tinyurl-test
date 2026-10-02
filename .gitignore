@@ -1,0 +1,23 @@
+# 環境變數（含密碼），只提交 .env.example
+.env
+.env.*
+!.env.example
+
+# Go
+services/go/bin/
+*.test
+*.out
+
+# Laravel
+services/laravel/vendor/
+services/laravel/storage/*.key
+services/laravel/.phpunit.result.cache
+
+# 前端
+node_modules/
+dist/
+
+# 編輯器與系統
+.idea/
+.vscode/
+.DS_Store
