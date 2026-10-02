@@ -11,10 +11,13 @@
 | `/api/`          | 後端 upstream                 |
 | `/{code}`        | 後端 upstream（轉址）         |
 
-## 兩個後端怎麼分流（待決定）
+## 兩個後端放在同一個 upstream
 
-- **依路徑分開**：例如 `/go/api/...` 給 Go、`/php/api/...` 給 Laravel。方便單獨測一個後端，但前端要知道自己在打哪一個。
-- **同一個 upstream 輪流接**：Go 與 Laravel 放在同一個 `upstream` 區塊，Nginx 依權重分配。前端不必知道後端是誰，也能直接驗證兩個實作的行為是否一致；可以用回應 header（例如 `X-Backend: go`）標記是誰回的。
+Go 與 Laravel 是同一份 API 規格的兩種實作，放在同一個 `upstream` 區塊，由 Nginx 分配請求。前端不知道、也不需要知道是哪一個後端回的；兩個實作只要有一處行為不一致，同一個操作就會時好時壞，問題會直接浮現。
+
+- **標記回應來源**：兩個後端都在回應加上 `X-Backend: go` 或 `X-Backend: laravel`，Nginx 的 access log 也記下 `$upstream_addr`，排查與壓測時才分得出是誰回的。
+- **權重**：預設兩邊相同；要單獨評估其中一個時，用另一份設定只放一個後端（見 [loadtest](../../loadtest/README.md) 的〈執行條件〉）。
+- **登入狀態**：同一個使用者的連續請求可能先後落在 Go 與 Laravel，所以登入憑證必須兩邊都能驗證，見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)。
 
 ## 流量管理
 

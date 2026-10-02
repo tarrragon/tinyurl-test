@@ -1,6 +1,6 @@
 # tinyurl-test
 
-電商用的短網址服務，給行銷團隊在簡訊、Email 與網路廣告裡放縮短後的連結，並在後台看點擊數據。這個 repo 是練習用的 monorepo：同一套短網址 API 分別用 Go 與 Laravel 各實作一次，前面放 Nginx 做負載平衡與流量管理，資料存在 PostgreSQL，熱資料放快取。
+電商用的短網址服務，給行銷團隊在簡訊、Email 與網路廣告裡放縮短後的連結，並在後台看點擊數據。這個 repo 是練習用的 monorepo：同一套短網址 API 分別用 Go 與 Laravel 各實作一次，兩者放在 Nginx 的同一個 upstream 輪流接請求，作為同樣功能的實作比較；Nginx 同時負責負載平衡與流量管理，資料存在 PostgreSQL，熱資料放快取。
 
 目前只有資料夾結構、各元件的 README 與 Dockerfile，還沒有任何程式碼。
 
@@ -58,6 +58,5 @@ docker compose up -d postgres cache   # 目前只有這兩個起得來
 
 - 快取伺服器選哪一個：比較見 [infra/cache/README.md](infra/cache/README.md)。
 - 前端框架：`web/` 的 Dockerfile 先假設「Node 建置出靜態檔、再由 Nginx 提供」，選定框架後調整。
-- Go 與 Laravel 兩個後端怎麼分流：依路徑分開，或放在同一個 upstream 輪流接，見 [infra/nginx/README.md](infra/nginx/README.md)。
 - 兩個後端共用的登入憑證格式，見 [docs/auth-and-roles.md](docs/auth-and-roles.md)。
 - 壓測工具，見 [loadtest/README.md](loadtest/README.md)。
