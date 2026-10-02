@@ -16,4 +16,4 @@
 
 ## Docker
 
-`Dockerfile` 是兩階段建置：Node 建置靜態檔，Nginx 提供靜態檔。框架選定之前無法建置。
+Vue 3 + Vite + TypeScript 的 SPA，見 [web/README.md](../README.md)。`Dockerfile` 是兩階段建置：Node 建置靜態檔，Nginx 提供靜態檔；專案建立之前無法建置。

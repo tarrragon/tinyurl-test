@@ -34,7 +34,7 @@
 
 | 路徑                                       | 內容                                                    |
 | ------------------------------------------ | ------------------------------------------------------- |
-| [web/](web/README.md)                      | 前端網頁，分前台與後台                                  |
+| [web/](web/README.md)                      | 前端網頁（Vue 3 + Vite），分前台與後台                  |
 | [web/portal/](web/portal/README.md)        | 前台：登入後建立、管理短網址                            |
 | [web/admin/](web/admin/README.md)          | 後台：點擊數據、log、使用者與權限管理                   |
 | [services/go/](services/go/README.md)      | Go 版短網址 API                                         |
@@ -56,5 +56,4 @@ docker compose up -d postgres cache   # 目前只有這兩個起得來
 
 ## 待決定
 
-- 前端框架：`web/` 的 Dockerfile 先假設「Node 建置出靜態檔、再由 Nginx 提供」，選定框架後調整。
 - 壓測工具，見 [loadtest/README.md](loadtest/README.md)。

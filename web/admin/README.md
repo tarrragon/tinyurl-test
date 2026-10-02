@@ -24,4 +24,4 @@
 
 ## Docker
 
-與前台相同的兩階段建置，見 [web/README.md](../README.md)。
+與前台相同，Vue 3 + Vite + TypeScript 的 SPA，兩階段建置，見 [web/README.md](../README.md)。後台掛在 `/admin/` 下，Vite 的 `base` 與 Vue Router 都要設這個前綴。
