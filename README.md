@@ -6,6 +6,8 @@
 
 ## 業務範圍
 
+需求、容量估算與各項設計取捨的完整說明在 [docs/system-design.md](docs/system-design.md)。
+
 - **使用者**：電商的行銷團隊（建立與管理連結、看活動成效）與工程師（看系統狀態與 log）。
 - **連結用途**：簡訊（字數有限，連結越短越好）、Email、網路廣告。建立連結時標記管道與活動，後台才能依管道比較成效。
 - **兩個網域**：短網址用獨立的短網域（本機 `s.localhost`），只負責轉址；前台、後台與 API 在另一個網域（本機 `app.localhost`）。
@@ -51,7 +53,7 @@
 | [infra/cache/](infra/cache/README.md)      | 快取伺服器 Valkey，以及選型時的比較                     |
 | [infra/postgres/](infra/postgres/README.md) | 主資料庫 PostgreSQL、初始化腳本                        |
 | [loadtest/](loadtest/README.md)            | 壓測情境、測試資料與結果紀錄                            |
-| [docs/](docs/)                             | 跨元件的設計文件（權限、API 規格）                      |
+| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型、API）、[登入與權限](docs/auth-and-roles.md) |
 
 ## Docker
 

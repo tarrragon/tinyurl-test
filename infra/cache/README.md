@@ -11,8 +11,9 @@
 | 短碼 → 原始網址        | 單純的 key-value 加過期時間，轉址路徑每次都會查   |
 | 限流計數               | 原子遞增加過期（`INCR` + `EXPIRE`）               |
 | 登入 session（若採用） | key-value 加過期，可主動刪除                      |
-| 點擊數的暫存與批次寫入 | 原子遞增，或用佇列 / stream 暫存點擊事件再批次寫進 PostgreSQL |
+| 點擊數的暫存與批次寫入 | stream 暫存點擊事件，背景程序批次寫進 PostgreSQL；要開 AOF 持久化才不會在重啟時掉資料 |
 | Laravel queue          | list 或 stream 資料結構                           |
+| 不存在的短碼           | 短效期的「不存在」標記，與 Bloom filter（見 [docs/system-design.md](../../docs/system-design.md) 的〈不存在的短碼〉） |
 | JWT 撤銷清單           | key 加 TTL（TTL 等於 token 剩下的效期），見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md) |
 
 ## 選項
