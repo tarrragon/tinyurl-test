@@ -198,6 +198,8 @@ erDiagram
 2. 背景程序每秒從 stream 批次取出，一次寫入多筆到 `click_events`。
 3. 另一個排程把 `click_events` 彙總到 `click_daily`。
 
+背景程序是新增的執行單元：Go 版是 `services/go/cmd/worker`，Laravel 版是一個 artisan 指令；兩個實作同時跑時要用 stream 的 consumer group，同一筆事件才只會被其中一個取走。
+
 代價是點擊數最終一致：後台看到的數字會落後幾秒。Valkey 在事件寫進 PostgreSQL 之前掛掉，會遺失那段時間的點擊；要避免就開啟 Valkey 的 AOF 持久化。壓測的「點擊數比對」量的就是這條管道有沒有掉資料。
 
 ## 一致性與可用性的取捨
