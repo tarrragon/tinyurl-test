@@ -27,6 +27,19 @@
 
 Go 與 Laravel 是同一份 API 規格的兩種實作，放在同一個 `upstream` 區塊，由 Nginx 分配請求。前端不知道、也不需要知道是哪一個後端回的；兩個實作只要有一處行為不一致，同一個操作就會時好時壞，問題會直接浮現。
 
+一個 upstream 只能用一種協定轉送，所以兩個後端都對外講 HTTP、都聽 `8080`：Go 直接講 HTTP，Laravel 的容器裡另外跑一個 Nginx 把 HTTP 轉成 FastCGI 交給 PHP-FPM（見 [services/laravel](../../services/laravel/README.md)〈容器內同時跑 Nginx 與 PHP-FPM〉）。
+
+```nginx
+upstream backend {
+    # 讓所有 worker 共用同一份分配狀態，見下方說明
+    zone backend 64k;
+    server go:8080;
+    server laravel:8080;
+}
+```
+
+- **`zone` 不能省**：Nginx 有多個 worker 程序（`worker_processes auto` 依 CPU 核心數開），沒有 `zone` 時每個 worker 各自記一份輪流的位置，也各自記哪個後端失敗過。每個新連線可能落在不同的 worker，每個 worker 都從清單第一個後端開始輪，所以短連線的請求幾乎全部落在第一個後端。8 核心的機器上實測，沒有 `zone` 時連續 6 個請求全部打到 Go，加上 `zone` 之後才 Go、Laravel 交替。
+
 - **標記回應來源**：兩個後端都在回應加上 `X-Backend: go` 或 `X-Backend: laravel`，Nginx 的 access log 也記下 `$upstream_addr`，排查與壓測時才分得出是誰回的。
 - **權重**：預設兩邊相同；要單獨評估其中一個時，用另一份設定只放一個後端（見 [loadtest](../../loadtest/README.md) 的〈執行條件〉）。
 - **登入狀態**：同一個使用者的連續請求可能先後落在 Go 與 Laravel，所以登入憑證必須兩邊都能驗證，見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)。
