@@ -6,7 +6,9 @@
 
 ## 業務範圍
 
-需求、容量估算與各項設計取捨的完整說明在 [docs/system-design.md](docs/system-design.md)。
+需求、容量估算與各項設計取捨的完整說明在 [docs/system-design.md](docs/system-design.md)；實作的先後順序與每個階段的完成條件在 [docs/roadmap.md](docs/roadmap.md)。
+
+這是練習專案，系統設計裡的每一項都會實作，順序是先做最簡單的版本、用壓測量出瓶頸，再逐項加上優化並重量一次。TLS、備份、秘密管理、高可用這類上線服務需要的項目刻意跳過，清單見 roadmap 的〈練習環境跳過的項目〉。
 
 - **使用者**：電商的行銷團隊（建立與管理連結、看活動成效）與工程師（看系統狀態與 log）。
 - **連結用途**：簡訊（字數有限，連結越短越好）、Email、網路廣告。建立連結時標記管道與活動，後台才能依管道比較成效。
@@ -53,7 +55,7 @@
 | [infra/cache/](infra/cache/README.md)      | 快取伺服器 Valkey，以及選型時的比較                     |
 | [infra/postgres/](infra/postgres/README.md) | 主資料庫 PostgreSQL、初始化腳本                        |
 | [loadtest/](loadtest/README.md)            | 壓測情境、測試資料與結果紀錄                            |
-| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型、API）、[登入與權限](docs/auth-and-roles.md) |
+| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型、API）、[開發順序](docs/roadmap.md)、[登入與權限](docs/auth-and-roles.md) |
 
 ## Docker
 
@@ -66,4 +68,5 @@ docker compose up -d postgres cache   # 目前只有這兩個起得來
 
 ## 待決定
 
+- API 錯誤格式、錯誤碼與分頁格式、metrics 名稱、契約測試工具：在 [開發順序](docs/roadmap.md) 的〈階段一：定案與骨架〉決定。
 - 壓測工具，見 [loadtest/README.md](loadtest/README.md)。
