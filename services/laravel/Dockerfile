@@ -6,11 +6,12 @@ WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 
-FROM php:8.4-fpm-alpine
-# pdo_pgsql：連 PostgreSQL；redis：Laravel 的 cache / session / queue driver；opcache：正式環境效能
+FROM php:8.5-fpm-alpine
+# pdo_pgsql：連 PostgreSQL；redis：Laravel 的 cache / session / queue driver
+# opcache 從 PHP 8.5 起編進 PHP 本體，不再另外安裝（docker-php-ext-install opcache 會失敗）
 RUN apk add --no-cache postgresql-libs \
  && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS postgresql-dev \
- && docker-php-ext-install pdo_pgsql opcache \
+ && docker-php-ext-install pdo_pgsql \
  && pecl install redis \
  && docker-php-ext-enable redis \
  && apk del .build-deps

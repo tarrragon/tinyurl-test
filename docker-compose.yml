@@ -1,5 +1,5 @@
-# 程式碼還沒寫，目前只有 postgres 與 cache 起得來；
-# 其餘服務的 build 會因為缺少 go.mod / composer.json / package.json 而失敗。
+# 各服務目前只有框架骨架：Go 與 Laravel 只回應 /healthz，前台與後台是 create-vue 的範例頁。
+# infra/nginx 的 conf.d 還沒寫路由，所以 8080 只會看到 Nginx 預設頁，各服務要從 compose 網路內存取。
 
 services:
   nginx:
@@ -37,6 +37,9 @@ services:
   laravel:
     build: ./services/laravel
     environment:
+      APP_KEY: ${APP_KEY}
+      # 寫到 stderr，`docker compose logs laravel` 才看得到；預設的 stack 會寫進容器內的檔案
+      LOG_CHANNEL: stderr
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432

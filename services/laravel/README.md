@@ -14,4 +14,4 @@ Laravel 版的短網址 API。與 [services/go](../go/README.md) 實作同一份
 
 ## Docker
 
-`php:8.4-fpm-alpine` 加上 `pdo_pgsql`、`redis`、`opcache` 擴充。PHP-FPM 只聽 FastCGI（port `9000`），HTTP 由 [infra/nginx](../../infra/nginx/README.md) 轉成 FastCGI 送進來。`composer install` 放在獨立階段，`composer.json` 沒變時可以沿用快取。
+`php:8.5-fpm-alpine` 加上 `pdo_pgsql`、`redis` 擴充；OPcache 從 PHP 8.5 起是 PHP 本體的一部分，不必另外安裝。PHP-FPM 只聽 FastCGI（port `9000`），HTTP 由 [infra/nginx](../../infra/nginx/README.md) 轉成 FastCGI 送進來。`composer install` 放在獨立階段，`composer.json` 沒變時可以沿用快取。
