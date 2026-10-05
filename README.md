@@ -55,7 +55,7 @@
 | [infra/cache/](infra/cache/README.md)      | 快取伺服器 Valkey，以及選型時的比較                     |
 | [infra/postgres/](infra/postgres/README.md) | 主資料庫 PostgreSQL、初始化腳本                        |
 | [loadtest/](loadtest/README.md)            | 壓測情境、測試資料與結果紀錄                            |
-| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型、API）、[開發順序](docs/roadmap.md)、[登入與權限](docs/auth-and-roles.md) |
+| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型、API）、[開發順序](docs/roadmap.md)、[CI 設計](docs/ci.md)、[登入與權限](docs/auth-and-roles.md) |
 
 ## Docker
 
