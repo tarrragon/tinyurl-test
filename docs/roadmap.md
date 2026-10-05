@@ -17,6 +17,7 @@
 - 定 metrics 的名稱與標籤（請求數、延遲、錯誤、快取命中），兩個後端之後照同一份名稱輸出，才能並排比較。
 - 建立契約測試的位置與工具：一組與語言無關、對 HTTP API 發請求並檢查回應的測試，兩個後端都要通過。
 - `docker compose up` 起得來 PostgreSQL、Valkey、Nginx。
+- 每個服務有 healthcheck，Gatus 監看各服務、`scripts/health.sh` 供 SSH 查詢（見 [infra/monitoring](../infra/monitoring/README.md)）。
 - 建立 CI 的 workflow：依改動的路徑只跑對應元件的 job，共用路徑（契約測試、migration、API 規格、`docker-compose.yml`）改了就全部重跑，整合測試起完整環境跑契約測試。設計見 [CI 設計](ci.md)。
 
 **完成條件**：API 規格、錯誤格式、metrics 名稱寫進文件；migration 能在空資料庫上建出全部資料表；契約測試能跑（此時全部失敗是正常的）；CI 對每個 PR 依改動的路徑啟動對應的 job，整合測試會跑但還不擋合併。
@@ -27,7 +28,7 @@
 
 - Go 版實作 `POST /api/links` 與 `GET /{code}`：亂數產生短碼、唯一索引擋重複、到期轉首頁。
 - 轉址直接查 PostgreSQL，**不加快取**；點擊事件在請求內**同步寫入** `click_events`。這兩個簡化是刻意的，之後的階段要量出它們的上限。
-- 健康檢查 `/healthz`，回應帶 `X-Backend: go`。
+- 健康檢查 `/-/healthz`，回應帶 `X-Backend: go`。
 - Nginx 依 `SHORT_DOMAIN`、`APP_DOMAIN` 分流到 Go。
 
 **依賴**：階段一。
@@ -37,7 +38,7 @@
 
 **目標**：在加任何優化之前，先量出最簡單做法的能力，並建立之後每個階段都會用到的量測工具。
 
-- 新增 `infra/observability/`：指標收集（例如 Prometheus）與面板（例如 Grafana）加入 compose；Go 版提供 `/metrics`，輸出結構化 log。
+- 新增 `infra/observability/`：指標收集（例如 Prometheus）與面板（例如 Grafana）加入 compose，Gatus 開啟 `metrics` 讓 Prometheus 收集探測結果；Go 版提供 `/-/metrics`（放在 `/-/` 下的理由見 [系統設計](system-design.md)〈健康檢查〉），輸出結構化 log。
 - 照 [loadtest](../loadtest/README.md) 寫出轉址基準與短碼掃描兩個情境的腳本，以及產生測試資料的腳本。
 - 跑第一次壓測，記錄可承受的流量、先到極限的那一層、PostgreSQL 的連線數與查詢延遲、點擊數比對。
 

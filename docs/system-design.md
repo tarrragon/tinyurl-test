@@ -90,6 +90,8 @@ Base62（`0-9a-zA-Z`）每多一個字元，可用的組合乘以 62：
 
 **自訂短碼**：與亂數短碼共用同一個唯一索引，有人先佔用就回 `409`。保留字（例如 `api`、`admin`）不開放自訂。
 
+短碼只用 Base62 字元，所以不會和 `/-/` 底下的維運端點同名，見〈健康檢查〉的〈後端的維運端點放在 `/-/` 底下〉；自訂短碼的驗證同樣只接受 Base62 字元。
+
 ### 到期之後
 
 - 預設到期時間：90 天（假設，依行銷活動的長度調整）。建立時可以改。
@@ -211,6 +213,31 @@ erDiagram
 背景程序是新增的執行單元：Go 版是 `services/go/cmd/worker`，Laravel 版是一個 artisan 指令；兩個實作同時跑時要用 stream 的 consumer group，同一筆事件才只會被其中一個取走。
 
 代價是點擊數最終一致：後台看到的數字會落後幾秒。Valkey 在事件寫進 PostgreSQL 之前掛掉，會遺失那段時間的點擊；要避免就開啟 Valkey 的 AOF 持久化。壓測的「點擊數比對」量的就是這條管道有沒有掉資料。
+
+## 健康檢查
+
+每個容器都有 healthcheck，Gatus 從 compose 網路裡另外探測一次，SSH 進主機時用 `scripts/health.sh` 查。三者的分工與實測行為見 [infra/monitoring](../infra/monitoring/README.md)；這一節記錄的是元件之間要先約定好的部分。
+
+### 兩個後端的健康端點是同一份契約
+
+Go 與 Laravel 都在容器的 `8080` 提供 `GET /-/healthz`：回 `200`、帶 `X-Backend` header。Laravel 內建的健康檢查路由 `/up` 已改成同一個路徑。兩個後端放在同一個 upstream，健康檢查、監控設定與之後的負載平衡器都只寫一份，所以路徑、port 與成功的判定要兩邊一致。
+
+`/-/healthz` 只給 compose 網路裡的 healthcheck 與 Gatus 用，入口 Nginx 不把它開放到 `SHORT_DOMAIN` 或 `APP_DOMAIN`。
+
+### 後端的維運端點放在 `/-/` 底下
+
+轉址 `GET /{code}` 與後端的維運端點在同一個 port 上。`/{code}` 對得到任何**一段**的路徑，所以一段、6 到 7 碼英數字的固定路由會跟短碼同名：`/healthz` 與階段三要加的 `/metrics` 都是 7 碼，本身就是合法的 Base62 短碼。Go 的 `http.ServeMux` 遇到兩者都對得上時交給固定路徑（實測 `/healthz` 進健康檢查的 handler，`/aB3xYz9` 進轉址的 handler），萬一亂數產生了同名的短碼，那條連結永遠轉不了址，也不會報錯。
+
+所以後端的維運端點一律放在 `/-/` 底下：`/-/healthz`、`/-/metrics`，之後的 `/-/readyz` 也一樣。Base62 短碼沒有 `-`，依產生方式就不可能同名，不需要維護排除清單。這個保留前綴有兩條配套：
+
+- **自訂短碼的驗證只接受 Base62 字元**（含 `-` 一律拒絕），否則使用者能自訂出 `-` 開頭的短碼。
+- **其他路由不受影響**：前台、後台在 `APP_DOMAIN`，Nginx 不交給 `/{code}`；`/api/links` 這類 API 有兩段，`/{code}` 對不到。要保留的只有和 `/{code}` 共用同一層路徑的那些。
+
+### 健康端點檢查到多深
+
+目前 `/-/healthz` 只證明程序與 HTTP handler 在運作，不檢查 PostgreSQL 與 Valkey。理由是兩者已經各自有 healthcheck，Gatus 也直接探測它們；把依賴放進後端的 `/-/healthz`，資料庫短暫不可用時兩個後端會一起變成 unhealthy，從狀態看不出是哪一層壞了。階段二接上資料庫之後再決定要不要另外提供一個檢查依賴的端點（`/-/readyz`）。
+
+Docker 對 unhealthy 的容器不會重啟，只有程序結束才會依 `restart` 政策重啟；healthcheck 在 compose 裡的作用是顯示狀態與 `depends_on` 的啟動順序。換到會依 healthcheck 重啟容器的平台（例如 Kubernetes 的 liveness probe）時，端點的深度要重新判斷。
 
 ## 一致性與可用性的取捨
 

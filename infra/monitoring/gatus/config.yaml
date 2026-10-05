@@ -1,0 +1,67 @@
+# Gatus 的監看清單。Gatus 從 compose 網路內部、以服務名稱對各容器發請求，
+# 結果顯示在 http://localhost:${GATUS_PORT}（見 docker-compose.yml）。
+# 這裡檢查的是「從另一個容器打得通」，跟各容器自己的 healthcheck（程序與自身端點）是兩層，
+# 分工見 infra/monitoring/README.md。
+
+ui:
+  title: tinyurl 服務狀態
+
+endpoints:
+  # 經過入口 Nginx：確認入口本身與路由是通的。
+  # 兩個後端放進同一個 upstream 之後，這一條不保證打到哪一個，所以兩個後端另外各自直接檢查。
+  - name: 入口 Nginx
+    group: 入口
+    url: "http://nginx/"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+
+  # 兩個後端直接打各自的 /-/healthz，失敗時分得出是哪一個
+  - name: Go 後端
+    group: 後端
+    url: "http://go:8080/-/healthz"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+      - "[RESPONSE_TIME] < 500"
+
+  - name: Laravel 後端
+    group: 後端
+    url: "http://laravel:8080/-/healthz"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+      - "[RESPONSE_TIME] < 500"
+
+  - name: 前台
+    group: 前端
+    url: "http://portal/"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+
+  # 後台的靜態檔放在 /admin/ 底下，見 web/admin/nginx.conf
+  - name: 後台
+    group: 前端
+    url: "http://admin/admin/"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+
+  # TCP 檢查只證明有程序在聽這個埠，不證明服務正常；
+  # Valkey 另外送一個 PING，要收到 PONG 才算通過
+  - name: Valkey
+    group: 資料
+    url: "tcp://cache:6379"
+    body: "PING\r\n"
+    interval: 30s
+    conditions:
+      - "[CONNECTED] == true"
+      - "[BODY] == pat(*PONG*)"
+
+  - name: PostgreSQL
+    group: 資料
+    url: "tcp://postgres:5432"
+    interval: 30s
+    conditions:
+      - "[CONNECTED] == true"

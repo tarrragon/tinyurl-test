@@ -7,7 +7,7 @@ Go 版的短網址 API。與 [services/laravel](../laravel/README.md) 實作同�
 - `GET /{code}`：查出原始網址並回 `302` 轉址，同時記錄一筆點擊事件。這是流量最大、最需要快的路徑：先查快取，查不到才查 PostgreSQL，再寫回快取。
 - `POST /api/links` 等管理 API：建立、列出、停用連結（回傳的完整短網址用 `SHORT_DOMAIN` 組出來），需要登入並依角色檢查權限（見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)）。
 - `GET /api/stats/...`：給後台的點擊統計。
-- `GET /healthz`：給 Nginx 與容器編排做健康檢查。
+- `GET /-/healthz`：給 Nginx 與容器編排做健康檢查。
 
 與 Laravel 版的效能比較在 [loadtest](../../loadtest/README.md)，兩邊用同一套情境、同樣的容器資源上限。
 

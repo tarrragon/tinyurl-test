@@ -1,6 +1,6 @@
 # services/laravel
 
-Laravel 版的短網址 API。與 [services/go](../go/README.md) 實作同一份 API 規格、連同一個資料庫與快取，負責的端點相同：轉址 `GET /{code}`、管理 API `/api/links`、統計 `/api/stats/...` 與健康檢查 `/healthz`。
+Laravel 版的短網址 API。與 [services/go](../go/README.md) 實作同一份 API 規格、連同一個資料庫與快取，負責的端點相同：轉址 `GET /{code}`、管理 API `/api/links`、統計 `/api/stats/...` 與健康檢查 `/-/healthz`。
 
 ## 與 Go 版要對齊的地方
 

@@ -1,41 +1,75 @@
-# 各服務目前只有框架骨架：Go 與 Laravel 只回應 /healthz，前台與後台是 create-vue 的範例頁。
+# 各服務目前只有框架骨架：Go 與 Laravel 只回應 /-/healthz，前台與後台是 create-vue 的範例頁。
 # infra/nginx 的 conf.d 還沒寫路由，所以 8080 只會看到 Nginx 預設頁，各服務要從 compose 網路內存取。
+# 健康檢查的分層（容器自己的 healthcheck、Gatus 從外部探測、指令列查詢）見 infra/monitoring/README.md。
+
+# 各服務 healthcheck 共用的時間參數：每 10 秒檢查一次，單次 3 秒逾時，連續 3 次失敗才判 unhealthy；
+# 啟動後 start_period 內的失敗不計入連續失敗次數，給服務載入的時間
+x-healthcheck-timing: &healthcheck-timing
+  interval: 10s
+  timeout: 3s
+  retries: 3
+  start_period: 15s
 
 services:
   nginx:
     build: ./infra/nginx
+    restart: unless-stopped
     environment:
       SHORT_DOMAIN: ${SHORT_DOMAIN}
       APP_DOMAIN: ${APP_DOMAIN}
     ports:
       - "${NGINX_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/"]
+      <<: *healthcheck-timing
+    # 入口只等上游「啟動」，不等它們 healthy：用 service_healthy 時，任一個上游 unhealthy，
+    # 重建或重啟入口就會失敗（dependency failed to start），整個站跟著進不去。
+    # 上游壞掉時由入口在請求當下處理（那條路徑回 502），其餘路徑照常服務。
     depends_on:
-      - portal
-      - admin
-      - go
-      - laravel
+      portal:
+        condition: service_started
+      admin:
+        condition: service_started
+      go:
+        condition: service_started
+      laravel:
+        condition: service_started
 
   portal:
     build: ./web/portal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/"]
+      <<: *healthcheck-timing
 
   admin:
     build: ./web/admin
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/admin/"]
+      <<: *healthcheck-timing
 
   go:
     build: ./services/go
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       CACHE_ADDR: cache:6379
       JWT_SECRET: ${JWT_SECRET}
       SHORT_DOMAIN: ${SHORT_DOMAIN}
+    # 執行階段是 distroless，沒有 shell 與 curl，由同一支執行檔的 -healthcheck 模式請求 /-/healthz
+    healthcheck:
+      test: ["CMD", "/server", "-healthcheck"]
+      <<: *healthcheck-timing
     depends_on:
       postgres:
         condition: service_healthy
       cache:
-        condition: service_started
+        condition: service_healthy
 
   laravel:
     build: ./services/laravel
+    restart: unless-stopped
     environment:
       APP_KEY: ${APP_KEY}
       # 寫到 stderr，`docker compose logs laravel` 才看得到；預設的 stack 會寫進容器內的檔案
@@ -50,14 +84,19 @@ services:
       REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET}
       SHORT_DOMAIN: ${SHORT_DOMAIN}
+    # 經過容器內的 Nginx 與 PHP-FPM 打 Laravel 的 /-/healthz，三者任一個壞掉都會失敗
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/-/healthz"]
+      <<: *healthcheck-timing
     depends_on:
       postgres:
         condition: service_healthy
       cache:
-        condition: service_started
+        condition: service_healthy
 
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -74,6 +113,19 @@ services:
   # 選定 Valkey，見 infra/cache/README.md；做效能比較時可換成 Redis 或 Dragonfly
   cache:
     image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      <<: *healthcheck-timing
+
+  # 從外部探測各服務的儀表板，設定在 infra/monitoring/gatus/config.yaml
+  gatus:
+    image: ghcr.io/twin/gatus:v5.37.0
+    restart: unless-stopped
+    ports:
+      - "${GATUS_PORT:-8090}:8080"
+    volumes:
+      - ./infra/monitoring/gatus:/config:ro
 
 volumes:
   pgdata:
