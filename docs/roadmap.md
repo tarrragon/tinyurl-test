@@ -109,6 +109,8 @@
 | 背景程序在批次寫入的交易裡累加 `click_hourly`（`INSERT ... ON CONFLICT DO NOTHING RETURNING` 只回傳真正寫進去的列，重送不重複計算；從某一個整點起改由累加維護，重算只處理那之前的小時；活動與收件人的彙總仍由重算維護） | 排程每一輪重讀兩個小時的點擊，佔用主庫的讀取 | 轉址基準、長時間穩定、點擊數比對（含重新投遞） |
 | 關掉 ORM 的預設交易、熱路徑改寫原始 SQL | 轉址與點擊寫入的每個請求，ORM 多送出的 SQL 與來回拉高延遲（GORM 的預設交易、Eloquent 建立 model 物件） | 轉址基準 |
 | 統計查詢讀 PostgreSQL 唯讀副本（依用途分流，其餘查詢照舊讀主庫；Go 用 dbresolver 的具名 resolver、Laravel 用另一個只連副本的資料庫連線） | 後台統計查詢與轉址同時跑時，轉址的 p99 升高、主庫的連線數或 CPU 有一部分花在統計查詢上 | 混合流量 |
+| 即時計數層（轉址時 Valkey `HINCRBY` 依連結與 UTC 整點累加；後台的目前與前一個小時讀 Valkey，界線取 `analytics_recompute_state.last_completed_hour`，見 [系統設計](system-design.md)〈彙總表與後台查詢〉） | 後台的數字落後一輪重算；量的是即時層讓轉址的 p99 增加多少、即時數字與重算後的數字差多少 | 轉址基準、點擊數比對（含重啟 Valkey，確認遺失的累加被下一輪重算補回） |
+| 共用連結的不重複點擊改用 HyperLogLog（`campaign_hourly` 加 `hll` 欄位，查詢時合併） | 跨小時加總的不重複點擊偏高 | 用同一批點擊比較：精確的 `count(DISTINCT)`、現行的逐小時加總、HyperLogLog 合併，三者的差與查詢耗時 |
 | 快取伺服器比較（Valkey、Dragonfly） | 比較兩者在同一條件下的差異 | 轉址基準、爆紅連結 |
 
 每個實驗完成時，把 [系統設計](system-design.md) 裡對應那一段的狀態從「規劃」改成「已實作」，並連到那次的壓測紀錄。

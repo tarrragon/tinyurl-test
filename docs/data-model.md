@@ -274,7 +274,7 @@ CREATE TABLE recipient_hourly (
 
 **一輪重算的範圍與順序**
 
-- **鎖、範圍與重算在同一個交易裡**，隔離等級是 PostgreSQL 預設的 READ COMMITTED。交易的第一個語句是 `SELECT pg_try_advisory_xact_lock(1, 1)`，回 `false` 就結束交易、跳過這一輪。鍵用兩個 int 的形式（第一個是本專案的代號 `1`，第二個是功能代號，`1` 是這個排程），和 Atlas 這類 migration 工具自己用的單一 bigint 鍵分開；鍵的清單寫在這份文件，新功能要用建議鎖時在這裡登記。用交易層級的鎖，交易結束時自動釋放：GORM 與 Laravel 從連線池拿連線，session 層級的鎖（`pg_try_advisory_lock`）取鎖與解鎖可能落在不同的連線上，解不開的鎖會留在池裡那條連線上。兩個後端都用這把鎖，不用 Laravel 排程的 `onOneServer()` 或 `withoutOverlapping()`：它們的鎖在快取儲存上，和 Go 的建議鎖彼此看不見。
+- **鎖、範圍與重算在同一個交易裡**，隔離等級是 PostgreSQL 預設的 READ COMMITTED。交易的第一個語句是 `SELECT pg_try_advisory_xact_lock(1, 1)`，回 `false` 就結束交易、跳過這一輪。鍵用兩個 int 的形式（第一個是本專案的代號 `1`，第二個是功能代號，`1` 是這個排程），和 Atlas 這類 migration 工具自己用的單一 bigint 鍵分開；鍵的清單寫在這份文件，新功能要用建議鎖時在這裡登記。用交易層級的鎖，交易結束時自動釋放：GORM 與 Laravel 從連線池拿連線，session 層級的鎖（`pg_try_advisory_lock`）取鎖與解鎖可能落在不同的連線上，解不開的鎖會留在池裡那條連線上。兩個後端都用這把鎖，不用 Laravel 排程的 `onOneServer()` 或 `withoutOverlapping()`：它們的鎖在快取儲存上，和 Go 的建議鎖彼此看不見。兩邊都改用 Valkey 上的鎖也不行：Laravel 排程的鎖在收尾時用 `forceRelease()` 直接刪除、不比對持有者，會刪掉 Go 正持有的鎖，鍵名前面還有快取與 Redis 連線兩層 prefix；就算改用 `Cache::lock()` 讓兩邊都比對持有者，它仍是有過期時間的租約：重算超過租約時兩份會同時寫，舊結果蓋過新結果；行程被強制結束時，`withoutOverlapping()` 的鎖預設要 24 小時才過期，期間每一輪都跳過。建議鎖在交易結束或連線斷開時立刻釋放，沒有租約長度要選，所以重算的互斥放在 PostgreSQL。
 - **逾時用 `SET LOCAL`**：取到鎖之後，交易裡執行 `SET LOCAL statement_timeout = '5min'` 與 `SET LOCAL idle_in_transaction_session_timeout = '1min'`（假設，依實際重算時間調整）。持有鎖的實例卡住時，其他實例每一輪都會跳過而且沒有紀錄，這兩個設定讓資料庫切斷它、鎖跟著釋放。用 `SET LOCAL` 而不是 `SET`：設定只在這個交易裡有效，連線還回池之後不會留給下一個使用者。
 - **要重算的小時**有三個來源，取聯集：
   1. 從 `analytics_recompute_state.last_completed_hour` 的前一個小時，到目前這個小時的每一個整點。平常就是目前與前一個小時；重算停擺過（部署、鎖被卡住、排程掛掉）時，停擺期間的每一個整點都會被補算，不會因為「只重算目前與前一個小時」而永遠漏掉。
@@ -319,7 +319,7 @@ CREATE TABLE analytics_recompute_state (
 ```
 
 - 只有一列（`name = 'hourly'`）。兩套 migration 在建表後都插入這一列：`last_completed_hour` 是 migration 執行時的前一個整點，`last_success_at` 是 migration 執行的時間。兩個後端都不必處理「讀不到這一列」的情形。
-- **監控讀這一列，不讀各實例的記憶體**：沒搶到鎖的實例不會更新任何東西，Laravel 的排程又是執行完就結束的行程，記在行程裡的指標都不可靠。指標 `tinyurl_analytics_recompute_lag_seconds` 是「現在減去 `last_success_at`」，由兩個後端的 metrics 端點在被收集時從資料庫讀出；超過 10 分鐘（假設）告警。`analytics_dirty_hours` 裡最舊的小時距離現在多久，是另一個指標 `tinyurl_analytics_dirty_hour_oldest_seconds`。階段八加上非同步寫入之後，另外監控 stream 未消費的數量與「寫入當下的時間減去 `clicked_at`」的最大值。
+- **監控讀這一列，不讀各實例的記憶體**：沒搶到鎖的實例不會更新任何東西，Laravel 的排程又是執行完就結束的行程，記在行程裡的指標都不可靠。指標 `tinyurl_analytics_recompute_lag_seconds` 是「現在減去 `last_success_at`」，由兩個後端的 metrics 端點在被收集時從資料庫讀出；超過 10 分鐘（假設）告警。`analytics_dirty_hours` 裡最舊的小時距離現在多久，是另一個指標 `tinyurl_analytics_dirty_hour_oldest_seconds`。重算順便算出共用連結的人為點擊佔全部人為點擊的比例，記成 `tinyurl_analytics_shared_link_click_ratio`，它是跨小時不重複點擊改用 HyperLogLog 的觸發指標之一（見 [系統設計](system-design.md)〈彙總表與後台查詢〉）。階段八加上非同步寫入之後，另外監控 stream 未消費的數量與「寫入當下的時間減去 `clicked_at`」的最大值。
 
 **全量重算**
 
