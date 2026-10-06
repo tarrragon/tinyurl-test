@@ -240,7 +240,7 @@ type ClickRecorder interface {
 
 ### 短碼重複的判斷
 
-`LinkStore` 的建立遇到唯一約束衝突時，依被違反的約束名稱判斷：名稱是 `links_code_key` 就回「短碼已被使用」的錯誤，其他約束照一般的資料庫錯誤處理。Go 從 GORM 錯誤裡包著的 pgx 錯誤取得 `ConstraintName`（見〈Go 的資料存取〉），Laravel 從 `QueryException` 的 SQLSTATE `23505` 與錯誤訊息裡的約束名稱取得；這是約束名稱要在 SQL 裡寫明的另一個理由。
+`LinkStore` 的建立遇到唯一約束衝突時，依被違反的約束名稱判斷：名稱是 `links_code_key` 就回「短碼已被使用」的錯誤，其他約束照一般的資料庫錯誤處理。Go 從 GORM 錯誤裡包著的 pgx 錯誤取得 `ConstraintName`（見〈Go 的資料存取〉），Laravel 13.2 起唯一約束違反拋出 `UniqueConstraintViolationException`，約束名稱直接在它的 `index` 屬性；這是約束名稱要在 SQL 裡寫明的另一個理由。
 
 拿到「短碼已被使用」之後：
 
