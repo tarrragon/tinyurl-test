@@ -235,7 +235,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 | `include_disabled` | `true` 時包含已停用的連結，預設不包含 |
 | `cursor`、`limit` | 分頁，見〈分頁〉 |
 
-依建立時間由新到舊排列，範圍依角色。
+依建立時間由新到舊排列，範圍依角色。**只列一般連結**，`POST /api/sends` 建立的收件人連結不在這裡：一次發送就是上萬條，混進來會佔滿列表；它們從 `GET /api/sends` 與收件人匯出查看，單一條仍可用 `GET /api/links/{code}` 查。
 
 ### `GET /api/links/{code}`
 

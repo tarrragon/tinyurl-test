@@ -111,6 +111,7 @@
 | 統計查詢讀 PostgreSQL 唯讀副本（依用途分流，其餘查詢照舊讀主庫；Go 用 dbresolver 的具名 resolver、Laravel 用另一個只連副本的資料庫連線） | 後台統計查詢與轉址同時跑時，轉址的 p99 升高、主庫的連線數或 CPU 有一部分花在統計查詢上 | 混合流量 |
 | 即時計數層（轉址時 Valkey `HINCRBY` 依連結與 UTC 整點累加；後台的目前與前一個小時讀 Valkey，界線取 `analytics_recompute_state.last_completed_hour`，見 [系統設計](system-design.md)〈彙總表與後台查詢〉） | 後台的數字落後一輪重算；量的是即時層讓轉址的 p99 增加多少、即時數字與重算後的數字差多少 | 轉址基準、點擊數比對（含重啟 Valkey，確認遺失的累加被下一輪重算補回） |
 | 共用連結的不重複點擊改用 HyperLogLog（`campaign_hourly` 加 `hll` 欄位，查詢時合併） | 跨小時加總的不重複點擊偏高 | 用同一批點擊比較：精確的 `count(DISTINCT)`、現行的逐小時加總、HyperLogLog 合併，三者的差與查詢耗時 |
+| 連結表長期成長（用假資料把 `links` 灌到一年與三年的量，約 5,000 萬與 1.5 億列，一般連結依估算的比例混入） | 不刪除的表變大之後，查詢讀的量有沒有跟著成長、維運動作變多慢 | 列表（含 `campaign` 篩選）、快取沒命中的轉址、收件人匯出各量一次 `EXPLAIN (ANALYZE, BUFFERS)` 的讀取頁數；表與索引大小、`CREATE INDEX` 與還原的耗時、autovacuum 一輪的耗時 |
 | 快取伺服器比較（Valkey、Dragonfly） | 比較兩者在同一條件下的差異 | 轉址基準、爆紅連結 |
 
 每個實驗完成時，把 [系統設計](system-design.md) 裡對應那一段的狀態從「規劃」改成「已實作」，並連到那次的壓測紀錄。

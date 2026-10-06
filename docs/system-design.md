@@ -54,7 +54,14 @@
 
 - 一般連結：每天 50 條，一年約 1.8 萬條。
 - 每個收件人一條：每年 100 次活動 × 50 萬則，一年 5,000 萬條。
-- 點擊事件：每年 100 次活動 × 5 萬次點擊，加上廣告，抓每年 1,000 萬筆。逐筆事件保留 90 天，之後只留每日彙總。
+- 點擊事件：每年 100 次活動 × 5 萬次點擊，加上廣告，抓每年 1,000 萬筆。逐筆事件保留 90 天，之後只留每小時的彙總。
+
+依會不會刪除分成兩類，長期的成本集中在不刪除的那一類：
+
+- **有保留期**：`click_events` 固定在約 250 萬筆（90 天的量），不隨營運年數變大。
+- **不刪除**：`links` 與 `link_recipients` 每年各增加約 5,000 萬列，三年約 1.5 億、五年約 2.5 億；短碼不重複使用、到期後仍要轉首頁，連結不能刪。彙總表（`click_hourly`、`recipient_hourly`、`campaign_hourly`）也不刪，但每列很窄、列數不超過點擊數。
+
+不刪除的表上，每一條查詢讀的量要由回傳筆數決定、不由表的列數決定，列表與匯出的索引依這個標準設計（見 [資料表與程式介面](data-model.md)〈links〉）。
 
 ## 短碼設計
 
@@ -112,7 +119,7 @@ erDiagram
     links ||--o{ click_hourly : summarizes
     users ||--o{ refresh_tokens : holds
     teams ||--o{ sends : owns
-    sends ||--o{ link_recipients : lists
+    sends ||--o{ links : creates
     links ||--o| link_recipients : "sent to"
     users ||--o{ sends : creates
     teams ||--o{ api_keys : owns
@@ -136,9 +143,10 @@ erDiagram
     links {
         bigint id PK
         text code UK
-        text original_url
-        text channel
-        text campaign
+        bigint send_id FK "發送建立的連結才有"
+        text original_url "發送連結為 NULL，取 sends"
+        text channel "發送連結為 NULL，取 sends"
+        text campaign "發送連結為 NULL，取 sends"
         bigint created_by FK
         bigint team_id FK
         timestamptz created_at
@@ -172,13 +180,13 @@ erDiagram
         bigint team_id FK
         text campaign
         text channel
+        text original_url
         bigint created_by FK
         timestamptz created_at
     }
     link_recipients {
         bigint link_id PK
-        bigint send_id FK
-        text recipient_ref UK "與 send_id 共同唯一，清除後為 NULL"
+        text recipient_ref "清除後為 NULL"
         text_array segments
         timestamptz erased_at
     }
@@ -206,6 +214,7 @@ erDiagram
 
 - 每個欄位的型別、約束、索引名稱，以及 Go 與 Laravel 怎麼對應這些資料表，定在 [資料表與程式介面](data-model.md)。
 - **`click_events` 之後依 `clicked_at` 分割（partition）**，每月一個分割區；PostgreSQL 要求分割表的主鍵包含分割欄位，所以主鍵會改成 `(click_id, clicked_at)`，原本的 `id` 拿掉。超過保留期的分割區整個刪除，比逐筆刪除快得多。第一版不分割，分割是[開發順序](roadmap.md)〈階段八：優化實驗〉的一個實驗，上圖是第一版的欄位。
+- **發送建立的連結只存短碼與 `send_id`**，網址、活動、管道存在 `sends`，連結列表只列一般連結並用部分索引：`links` 不刪除、一年增加約 5,000 萬列，理由與量測見 [資料表與程式介面](data-model.md)〈links〉。`links` 不依時間分割：PostgreSQL 分割表的唯一約束必須包含分割欄位，依時間分割之後短碼的唯一索引只能寫成 `(code, created_at)`，兩個後端共用的仲裁者就不存在了；要保住它得另建一張不分割的短碼登記表（`code` 當主鍵），每次建立多寫一張表，而登記表本身也不刪除。連結又不會過保留期被整個分割區刪掉，依時間分割換不到它在事件表上的主要好處。
 - **點擊數不放在 `links` 的計數欄位**：爆紅連結每秒數百次更新同一列，會在那一列上排隊等鎖。點擊先記成事件，再以 UTC 的整點為單位彙總到 `click_hourly`；統計 API 依查詢的時區把小時組成日（台北的一天是 UTC 前一天 16 時到當天 16 時），以 UTC 的日為單位存的話，台北的日期就組不出來。
 - **角色只放在 `users.role`**：四個角色是固定的，不需要另一張表；角色變多或要細分權限時再拆。
 
@@ -381,4 +390,9 @@ Docker 對 unhealthy 的容器不會重啟，只有程序結束才會依 `restar
    - **觸發指標**：混合流量下，後台統計查詢與轉址同時跑時轉址的 p99 升高，而且主庫的連線數或 CPU 有明顯一部分花在統計查詢上。加副本的同一步開始量複寫延遲（PostgreSQL 的 `pg_stat_replication`），統計頁面可以顯示「資料截至幾秒前」。
 2. **轉址與管理分開部署**：短網域的流量只交給一組專門處理轉址的實例，後台的重查詢不會影響轉址。
 3. **點擊事件**：已經依時間分割；寫入量再大就換成專門的事件管道（例如 Kafka）。
-4. **分片（sharding）**：連結數到億級以上才需要，依短碼的雜湊分片，轉址只要查一個分片。
+4. **分片（sharding）或依短碼的雜湊分割**：依短碼的雜湊切，唯一約束保得住，轉址只要查一個分片。照估算，連結數兩年就過億，所以觸發條件不用列數，用 `links` 變大之後增加的成本：
+   - 短碼索引與列表索引放不進記憶體：`pg_statio_user_indexes` 的 `idx_blks_read` 持續增加，快取沒命中的轉址 p99 升高。
+   - autovacuum 處理 `links` 一輪的耗時（開 `log_autovacuum_min_duration` 記錄）。
+   - 在 `links` 上建索引或還原備份的耗時超過可接受的停機或維護時間。
+   - 每月記一次 `pg_total_relation_size('links')` 與它的索引大小，算出成長率，估什麼時候碰到上面的上限。
+   把已到期很久的連結搬到另一張表也是一個選項，代價是建立短碼時要同時查兩張表才能確認不重複（或另建短碼登記表當仲裁者），觸發條件相同。
