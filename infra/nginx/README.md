@@ -52,6 +52,10 @@ upstream backend {
 - **驗證**：限流門檻是否生效、後端被移出時流量是否轉到另一個，由 [loadtest](../../loadtest/README.md) 的限流驗證與後端故障情境確認。
 - **快取轉址回應**：要統計點擊就不在 Nginx 快取 `302`，否則點擊不會到後端。
 
+## 請求大小
+
+`POST /api/sends` 一次帶最多一萬位收件人與客群標籤，body 大約數百 KB，超過 Nginx 預設的 `client_max_body_size 1m` 的可能性不高但存在。這個路徑的 `location` 設成 `client_max_body_size 2m`，其他路徑維持預設；超過時 Nginx 直接回 `413`（見 [API 與路由規格](../../docs/api.md)〈`POST /api/sends`〉）。
+
 ## Docker
 
 基於 `nginx:alpine`，把 `conf.d/` 複製進映像檔。目前 `conf.d/` 是空的，容器會用 Nginx 預設設定啟動。

@@ -1,6 +1,6 @@
 # infra/postgres
 
-主資料庫 PostgreSQL，保存連結、使用者、角色與點擊事件。
+主資料庫 PostgreSQL，保存連結、使用者、角色、點擊事件、收件人對應與轉換。
 
 ## 預定的資料
 
@@ -8,8 +8,11 @@
 
 - `teams`、`users`、`refresh_tokens`：登入與權限，角色放在 `users.role`。
 - `links`：短碼（唯一索引，兩個後端產生的短碼靠它判斷重複）、原始網址、管道、活動、建立者、到期與停用時間。
-- `click_events`：每一次轉址一筆。第一版不分割，階段七的實驗改成依時間做 [partition](https://www.postgresql.org/docs/current/ddl-partitioning.html)，超過保留期的分割區整個刪除。
+- `click_events`：每一次轉址一筆。第一版不分割，階段八的實驗改成依時間做 [partition](https://www.postgresql.org/docs/current/ddl-partitioning.html)，超過保留期的分割區整個刪除。
 - `click_daily`：每日彙總，後台報表讀這張。
+- `sends`、`link_recipients`：每個收件人一條連結的發送，收件人只存 CRM 的識別碼與發送當下的客群。
+- `conversions`、`api_keys`：電商用伺服器金鑰回報的轉換。
+- `campaign_daily`、`recipient_daily`、`analytics_watermarks`：行銷分析的每日彙總與重算水位。
 
 ## 誰管 schema
 

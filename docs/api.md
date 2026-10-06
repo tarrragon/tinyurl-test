@@ -9,7 +9,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 | 項目 | 約定 |
 | --- | --- |
 | 網域 | 管理 API 只在 `APP_DOMAIN` 的 `/api/` 底下；`SHORT_DOMAIN` 只做轉址 |
-| 版本 | 網址不帶版本號（沒有 `/v1`）。消費者只有自己的兩個前端，跟後端一起部署；觸發條件見〈不在範圍內〉 |
+| 版本 | 網址不帶版本號（沒有 `/v1`）。消費者是自己的兩個前端，跟後端一起部署；唯一的例外是電商伺服器呼叫的 `POST /api/conversions` 與轉址附加的 `tc` 參數，它們是對外的契約，只做向下相容的新增，見〈轉換回報〉 |
 | 請求格式 | 有 body 的請求（`POST`、`PATCH`）一律 `Content-Type: application/json`，否則回 `415`。沒有內容的 `POST`（例如登出）送 `{}`。這同時是 CSRF 的第二層防護，見 [登入與權限](auth-and-roles.md) |
 | 回應格式 | 成功是 `application/json`；錯誤是 `application/problem+json`，見〈錯誤格式〉 |
 | 欄位命名 | `snake_case` |
@@ -61,31 +61,39 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 | `POST /api/auth/logout` | 登出 | 已登入 |
 | `GET /api/auth/me` | 目前使用者 | 已登入 |
 | `POST /api/links` | 建立連結 | `marketing`、`marketing_lead`、`admin` |
-| `POST /api/links/batch` | 每個收件人一條的批次建立 | `marketing_lead`、`admin` |
+| `POST /api/sends` | 建立一次發送：每位收件人一條連結 | `marketing_lead`、`admin` |
+| `GET /api/sends` | 列出發送，`?campaign=` 篩選 | 範圍依角色，`engineer` 除外 |
+| `GET /api/sends/{id}` | 單一發送 | 範圍依角色，`engineer` 除外 |
 | `GET /api/links` | 列出連結 | 已登入（範圍依角色） |
 | `GET /api/links/{code}` | 單一連結 | 已登入（範圍依角色） |
 | `PATCH /api/links/{code}` | 停用、恢復、修改到期時間 | 建立者、`marketing_lead`、`admin` |
 | `GET /api/stats/links/{code}` | 單一連結的點擊統計 | 範圍依角色，`engineer` 除外 |
 | `GET /api/stats/campaigns` | 一個活動依管道的點擊統計 | 範圍依角色，`engineer` 除外 |
 | `GET /api/stats/campaigns/export` | 匯出活動報表（CSV） | `marketing_lead`、`admin` |
+| `GET /api/sends/{id}/recipients/export` | 匯出一次發送裡每位收件人的點擊與轉換（CSV） | `marketing_lead`、`admin`（範圍依角色） |
+| `POST /api/conversions` | 電商回報一筆轉換 | 伺服器金鑰 |
+| `GET /api/api-keys` | 列出伺服器金鑰 | `admin` |
+| `POST /api/api-keys` | 建立伺服器金鑰 | `admin` |
+| `DELETE /api/api-keys/{id}` | 撤銷伺服器金鑰 | `admin` |
+| `POST /api/recipients/erase` | 清除一位客人在所有發送裡的對應（個資刪除請求） | `admin` |
 | `GET /api/users` | 列出使用者 | `admin` |
 | `POST /api/users` | 建立使用者 | `admin` |
 | `PATCH /api/users/{id}` | 改角色、團隊、停用 | `admin` |
 | `GET /api/teams` | 列出團隊 | 已登入 |
 | `POST /api/teams` | 建立團隊 | `admin` |
 
-**沒有任何 `DELETE`**：連結的短碼不重複使用、到期後仍要轉首頁（見 [系統設計](system-design.md)〈到期之後〉），所以連結只能停用不能刪除。使用者被連結與點擊紀錄引用，刪除會讓統計找不到建立者，所以只能停用（`users.disabled_at`）；團隊同樣被引用，目前沒有停用團隊的需求，所以只提供建立與列出。
+**連結、使用者與團隊沒有 `DELETE`**，唯一的 `DELETE` 是撤銷伺服器金鑰：連結的短碼不重複使用、到期後仍要轉首頁（見 [系統設計](system-design.md)〈到期之後〉），所以連結只能停用不能刪除。使用者被連結與點擊紀錄引用，刪除會讓統計找不到建立者，所以只能停用（`users.disabled_at`）；團隊同樣被引用，目前沒有停用團隊的需求，所以只提供建立與列出。
 
 ### 「範圍依角色」的意思
 
 | 角色 | 連結與統計看得到的範圍 |
 | --- | --- |
-| `marketing` | 自己建立的連結 |
-| `marketing_lead` | 自己團隊的連結 |
+| `marketing` | 自己建立的連結與發送 |
+| `marketing_lead` | 自己團隊的連結與發送 |
 | `engineer` | 全部連結的設定（唯讀）；不看統計 |
 | `admin` | 全部 |
 
-範圍外的連結一律回 `404` 而不是 `403`：回 `403` 等於告訴請求者「這個短碼存在」，可以拿來探測別的團隊的連結。`403` 只用在角色本身沒有這個操作的權限時（例如 `marketing` 呼叫 `POST /api/links/batch`）。
+範圍外的連結一律回 `404` 而不是 `403`：回 `403` 等於告訴請求者「這個短碼存在」，可以拿來探測別的團隊的連結。`403` 只用在角色本身沒有這個操作的權限時（例如 `marketing` 呼叫 `POST /api/sends`）。
 
 ## 轉址
 
@@ -97,9 +105,10 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 | 短碼存在、已到期或已停用 | `302`，`Location: <電商首頁>`，記錄一筆點擊並標記「已到期」 |
 | 短碼不存在 | `404`，一頁簡單的 HTML |
 
+- **點擊識別碼**：記錄點擊的 `GET` 會產生一個點擊識別碼（UUIDv7）。`Location` 的主機名稱轉成小寫之後，與 `CONVERSION_HOSTS` 裡的某一個主機名稱完全相同時（不含子網域、不比 port），在查詢字串最後加上 `tc=<點擊識別碼>`，原有的參數與 `#` 之後的片段保持不變。兩個後端照這條規則必須產生逐字相同的 `Location`，契約測試涵蓋有、沒有查詢字串與帶片段三種網址。電商用它回報轉換，見〈轉換回報〉；設計理由見 [系統設計](system-design.md)〈點擊識別碼與轉換回報〉。
 - 所有轉址回應帶 `Cache-Control: no-store`：瀏覽器或中間的代理快取了轉址，之後的點擊就不會到後端，點擊數會少算。
-- `HEAD` 回同樣的狀態碼與 header，但**不記錄點擊**：送 `HEAD` 的多半是連結預覽與檢查工具，不是訪客。
-- 電商首頁的網址由環境變數提供（例如 `HOME_URL`），兩個後端共用。
+- `HEAD` 回同樣的狀態碼與 header，但**不記錄點擊**、`Location` 也不帶 `tc`：送 `HEAD` 的多半是連結預覽與檢查工具，不是訪客。
+- 電商首頁的網址（例如 `HOME_URL`）與要附加 `tc` 的網域清單（`CONVERSION_HOSTS`，逗號分隔）由環境變數提供，兩個後端共用。
 
 ## 登入
 
@@ -171,7 +180,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 
 | 錯誤情況 | 狀態碼 | 錯誤碼 |
 | --- | --- | --- |
-| `original_url` 不是 `http` 或 `https` 的絕對網址 | `422` | `invalid_url` |
+| `original_url` 不是 `http` 或 `https` 的絕對網址，或已經帶有 `tc` 參數 | `422` | `invalid_url` |
 | `code` 不是 6 到 7 碼的 Base62 | `422` | `invalid_code` |
 | `code` 已被使用 | `409` | `code_taken`（放在 `errors` 裡，頂層 `code` 是 `conflict`） |
 | `expires_at` 早於現在 | `422` | `invalid_expiry` |
@@ -182,16 +191,40 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 
 一個請求可能同時有多個欄位錯誤，`422` 的回應在 `errors` 裡逐欄列出，見〈錯誤格式〉。
 
-### `POST /api/links/batch`
+### `POST /api/sends`
 
 ```json
-{ "original_url": "https://...", "channel": "sms", "campaign": "autumn", "count": 5000, "expires_at": "2027-01-04T08:30:00Z" }
+{
+  "original_url": "https://...",
+  "channel": "sms",
+  "campaign": "autumn",
+  "expires_at": "2027-01-04T08:30:00Z",
+  "team_id": 3,
+  "recipients": [
+    { "ref": "C000123", "segments": ["vip", "dormant_90d"] },
+    { "ref": "C000456", "segments": [] }
+  ]
+}
 ```
 
-- 產生 `count` 條 7 碼的連結（每個收件人一條，7 碼的理由見 [系統設計](system-design.md)〈長度〉），不接受自訂短碼。
-- `count` 上限 10,000（假設，依一次簡訊發送的名單大小調整）；超過回 `422`、`batch_too_large`。
-- 成功：`201`，body 是 `{ "items": [<連結物件>...] }`，順序就是產生的順序，前端依序對應到收件人名單。
+- 建立一次發送（send）：每位收件人產生一條 7 碼的連結（7 碼的理由見 [系統設計](system-design.md)〈長度〉），不接受自訂短碼，請求帶了 `code` 欄位回 `422`、`invalid_code`。收件人與連結的對應另外存放，見 [資料表與程式介面](data-model.md)〈link_recipients〉。
+- `ref` 是 CRM 的客戶識別碼，**不要放 email、電話或姓名**：本服務不存個人資料，收件人的身分留在 CRM。格式是 1 到 100 個英數字、`_` 或 `-`，同一次發送裡不能重複。
+- `segments` 是發送當下的客群標籤，每個符合 `^[a-z0-9_]{1,50}$`，可以是空陣列。
+- `team_id`：`marketing_lead` 不必帶，一律是自己的團隊，帶了與自己不同的團隊回 `422`、`invalid_team`；`admin` 必須帶，轉換回報以團隊為單位，沒有團隊的發送對不到任何轉換。
+- `recipients` 上限 10,000 位（假設，依一次簡訊發送的名單大小調整）；超過回 `422`、`batch_too_large`。名單大於上限的發送分成多次呼叫，每次是一個獨立的發送。一萬位收件人加上客群，body 大約數百 KB，入口 Nginx 對這個路徑把 `client_max_body_size` 設成 2 MB（預設 1 MB），超過時 Nginx 直接回 `413`。
+- 成功：`201`，`Location: /api/sends/{id}`，body 是 `{ "send_id": 42, "items": [ { "recipient_ref": "C000123", "link": <連結物件> } ] }`，每一項帶著它的 `recipient_ref`，呼叫端依 `ref` 對回名單，不依順序。
 - 整批在同一個交易裡寫入：全部成功或全部不寫，前端不必處理「建了一半」的情況。
+
+| 錯誤情況 | 狀態碼 | 錯誤碼 |
+| --- | --- | --- |
+| `recipients` 是空的、`ref` 格式不符或同一批裡重複 | `422` | `invalid_recipients` |
+| 某個客群標籤格式不符 | `422` | `invalid_segments` |
+| `admin` 沒帶 `team_id`、或團隊不存在 | `422` | `invalid_team` |
+| 其餘欄位 | 同 `POST /api/links` | |
+
+### `GET /api/sends`
+
+查詢參數 `campaign`（選填）、`limit`、`cursor`（見〈分頁〉）。回 `{ "items": [ { "id": 42, "campaign": "autumn", "channel": "sms", "team_id": 3, "created_by": { "id": 12, "email": "..." }, "created_at": "...", "recipients": 5000 } ], "next_cursor": null }`。後台的活動頁用它列出一個活動的每次發送，再依 `id` 匯出收件人的結果。`GET /api/sends/{id}` 回其中一項；不存在或在範圍外回 `404`、`send_not_found`。
 
 ### `GET /api/links`
 
@@ -221,7 +254,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 
 ## 點擊統計
 
-點擊統計讀 `click_daily`，是最終一致的彙總，可能落後幾秒到一分鐘。日期以 UTC 的日為單位。
+點擊統計讀排程重算的彙總表，是最終一致的數字，可能落後幾秒到一分鐘：單一連結讀 `click_daily`，活動與發送讀 `campaign_daily` 與 `recipient_daily`（重算規則見 [資料表與程式介面](data-model.md)〈分析彙總的重算〉）。日期以 UTC 的日為單位。
 
 ### `GET /api/stats/links/{code}`
 
@@ -233,15 +266,56 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 
 ### `GET /api/stats/campaigns`
 
-查詢參數 `name`（活動名稱，必填）、`from`、`to`。活動名稱放在查詢參數而不是路徑：名稱是行銷輸入的自由文字，可能有空白與中文，放進路徑要處理編碼，而且同一個名稱可能在不同團隊各出現一次。
+查詢參數 `name`（活動名稱，必填）、`send_id`（選填，只看這一次發送）、`from`、`to`。活動名稱放在查詢參數而不是路徑：名稱是行銷輸入的自由文字，可能有空白與中文，放進路徑要處理編碼，而且同一個名稱可能在不同團隊各出現一次。
 
 ```json
-{ "campaign": "autumn", "total": 8200, "by_channel": [ { "channel": "sms", "clicks": 5100 }, { "channel": "email", "clicks": 3100 } ] }
+{
+  "campaign": "autumn",
+  "total":      { "clicks": 8200, "human_clicks": 7400, "unique_clicks": 5300, "conversions": 410, "revenue": "612300.00" },
+  "by_channel": [ { "channel": "sms", "clicks": 5100, "human_clicks": 4700, "unique_clicks": 3600, "conversions": 300, "revenue": "450100.00" } ],
+  "by_segment": [ { "segment": "vip", "clicks": 1200, "human_clicks": 1150, "unique_clicks": 800, "conversions": 120, "revenue": "240000.00" } ],
+  "unique_clicks_estimated": true
+}
 ```
+
+- 讀 `campaign_daily`（見 [資料表與程式介面](data-model.md)〈campaign_daily〉）。`human_clicks` 排除依 User-Agent 判斷為預覽或掃描的點擊；`unique_clicks` 在收件人連結上是「有人為點擊的收件人數」，在活動共用的連結上是同一天、同一個 IP 加 User-Agent 算一次的估計值，活動裡有共用連結時 `unique_clicks_estimated` 是 `true`。
+- `conversions` 是歸因期間內（點擊前 5 分鐘到點擊後 7 天，假設）、對得到這個活動點擊的轉換，算在成交的那一天；轉換率由前端以 `conversions / unique_clicks` 計算。
+- `revenue` 用字串表示金額，避免浮點數的誤差。
+- `by_segment` 只含收件人連結；一位收件人屬於多個客群時在每個客群各算一次，所以各客群相加會大於 `total`。
 
 ### `GET /api/stats/campaigns/export`
 
 參數同上，回 `text/csv`，每列是一條連結的點擊數。
+
+### `GET /api/sends/{id}/recipients/export`
+
+回 `text/csv`（UTF-8、逗號分隔、第一列是欄位名稱），每列是這次發送的一位收件人：`recipient_ref`、`segments`（多個標籤以 `|` 分隔）、`first_click_at`（第一次人為點擊的時間，RFC 3339，沒有時空白）、`human_clicks`、`conversions`、`revenue`。以 `link_recipients` 為主、`LEFT JOIN` `recipient_daily` 加總，沒有點擊也沒有轉換的收件人照樣出現，次數是 `0`。行銷把它匯入 CRM，回答「收到通知的客人有沒有回來」，並據此做下一次分群。已因個資刪除請求清空的收件人不出現在檔案裡。發送不存在或在範圍外回 `404`、`send_not_found`。
+
+## 轉換回報
+
+### `POST /api/conversions`
+
+這是本服務第一個對外的端點：呼叫者是電商的伺服器，不跟本服務一起部署。所以它與轉址的 `tc` 參數只做向下相容的變更（新增選填欄位、新增回應欄位），不改既有欄位的意思；要做不相容的變更時另開新路徑，舊路徑保留到電商換完。
+
+電商的伺服器在訂單成立時呼叫，認證用伺服器金鑰：`Authorization: Bearer <金鑰>`（見 [登入與權限](auth-and-roles.md)〈伺服器金鑰：轉換回報〉）。
+
+```json
+{ "click_id": "0192f1c4-7b2a-7c3e-9a51-5d0f3e8b6a10", "order_ref": "SO-20261006-0042", "amount": "1490.00", "converted_at": "2026-10-06T09:12:30Z" }
+```
+
+- `click_id` 是訪客進站時網址上的 `tc` 參數。
+- 成功寫入：`201`，body 是記錄下來的轉換：`{ "id": 9001, "click_id": "...", "order_ref": "...", "amount": "1490.00", "converted_at": "...", "received_at": "..." }`。
+- 同一個團隊的同一個 `order_ref` 已經記錄過、而且內容相同時回 `200` 與既有的那一筆，電商的重試不會讓轉換重複計算；內容不同時回 `409`、`conversion_conflict`。「內容相同」的比法：`click_id` 相同、`amount` 以數值比較（`"1490.0"` 與 `"1490.00"` 相同）、`converted_at` 截到秒比較。
+- 只檢查格式，不檢查 `click_id` 對不對得到點擊：點擊事件可能還沒寫進資料庫。對不到點擊、或點擊屬於別的團隊的轉換照樣回 `201`，但不計入任何報表。
+
+| 錯誤情況 | 狀態碼 | 錯誤碼 |
+| --- | --- | --- |
+| 沒帶金鑰、金鑰不存在或已撤銷 | `401` | `api_key_invalid` |
+| `click_id` 不是 UUID | `422` | `invalid_click_id` |
+| `order_ref` 是空字串或超過 100 字元 | `422` | `invalid_order_ref` |
+| `amount` 不是 0 到 9,999,999,999.99 之間、最多兩位小數的金額字串 | `422` | `invalid_amount` |
+| `converted_at` 不是時間、晚於現在超過 5 分鐘，或早於現在超過 30 天 | `422` | `invalid_converted_at` |
+| 同一個 `order_ref` 已記錄、內容不同 | `409` | `conversion_conflict`（放在 `errors` 裡，頂層 `code` 是 `conflict`） |
 
 ## 維運與使用者管理
 
@@ -263,26 +337,35 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 
 來源 IP 與 User-Agent 屬於個人資料，Grafana 上只開給 `engineer` 與 `admin`，與 [登入與權限](auth-and-roles.md) 的角色對照一致。
 
+### 伺服器金鑰
+
+`POST /api/api-keys` 的 body 是 `{ "team_id": 3, "name": "shop-production" }`（團隊不存在回 `422`、`invalid_team`），回 `201` 與 `{ "id": 7, "name": "shop-production", "team_id": 3, "key": "tk_...", "created_at": "..." }`。**`key` 只在建立時回傳這一次**，之後的列表只有 `id`、`name`、`team_id`、`created_at`、`revoked_at`。`DELETE /api/api-keys/{id}` 設定 `revoked_at`，回 `204`，撤銷後的金鑰立即失效；已經撤銷的再撤銷一次同樣回 `204`，金鑰不存在回 `404`、`api_key_not_found`。`name` 1 到 50 字元，不符回 `422`、`invalid_api_key_name`。
+
+### 收件人對應的清除
+
+`POST /api/recipients/erase` 的 body 是 `{ "recipient_ref": "C000123" }`（缺少或格式不符回 `422`、`invalid_recipient_ref`），清除這位客人在所有發送裡的對應：`link_recipients.recipient_ref` 設成 NULL 並記下清除時間，回 `204`（本來就沒有也回 `204`）。識別碼放在 body 而不是路徑，避免兩個框架對路徑編碼的處理不同。點擊事件、轉換與客群標籤不動：它們只帶 `link_id` 與點擊識別碼，對應清除之後就不再連到任何客人，而活動與客群的數字重算之後也不變。
+
 ### 使用者與團隊
 
 - `GET /api/users`：列出使用者，支援分頁與 `team_id`、`role` 篩選。
 - `POST /api/users`：`{ "email", "role", "team_id", "password" }`，成功 `201`；email 已存在回 `409`，`errors` 裡是 `email_taken`。email 比對不分大小寫，後端轉成小寫再存。欄位錯誤回 `422`：email 格式錯誤是 `invalid_email`，密碼不是 8 到 72 bytes 是 `invalid_password`（理由見 [登入與權限](auth-and-roles.md)〈密碼〉），角色不在四個角色裡是 `invalid_role`，`team_id` 不存在、或行銷的兩個角色沒給團隊是 `invalid_team`。
-- `PATCH /api/users/{id}`：接受 `role`、`team_id`、`disabled`，欄位錯誤的錯誤碼同 `POST /api/users`。停用或改角色時，刪除該使用者的 refresh token，並讓他手上還沒過期的 access token 立刻失效，做法見 [登入與權限](auth-and-roles.md)〈效期與撤銷〉。
+- `PATCH /api/users/{id}`：接受 `role`、`team_id`、`disabled`，欄位錯誤的錯誤碼同 `POST /api/users`。停用、改角色或改團隊時，刪除該使用者的 refresh token，並讓他手上還沒過期的 access token 立刻失效，做法見 [登入與權限](auth-and-roles.md)〈效期與撤銷〉。
 - `GET /api/teams`、`POST /api/teams`：`{ "name" }`，名稱 1 到 100 字元，不合規則回 `422`、`invalid_team_name`；名稱已存在回 `409`，`errors` 裡是 `team_name_taken`。
 
 ## 狀態碼
 
 | 狀態碼 | 用在 |
 | --- | --- |
-| `200` | 讀取、`PATCH` 成功 |
+| `200` | 讀取、`PATCH` 成功；轉換回報重送且內容相同 |
 | `201` | 建立成功，帶 `Location` |
-| `204` | 成功但沒有內容（登入、登出、換發 token） |
+| `204` | 成功但沒有內容（登入、登出、換發 token、撤銷伺服器金鑰、清除收件人對應） |
 | `302` | 轉址 |
 | `400` | body 不是合法的 JSON、查詢參數格式錯誤（例如 `cursor` 解不開） |
-| `401` | 沒登入、token 過期或無效 |
+| `401` | 沒登入、token 過期或無效；伺服器金鑰無效或已撤銷 |
 | `403` | 已登入，但角色沒有這個操作的權限 |
 | `404` | 資源不存在，或在使用者的範圍外 |
-| `409` | 與既有資料衝突（短碼、email、團隊名稱已被使用） |
+| `409` | 與既有資料衝突（短碼、email、團隊名稱已被使用；同一筆訂單以不同內容回報） |
+| `413` | body 超過入口 Nginx 的上限（由 Nginx 回應，不是後端的錯誤格式） |
 | `415` | 有 body 但不是 `application/json` |
 | `422` | JSON 格式正確，但欄位值不合規則 |
 | `429` | 超過限流 |
@@ -322,14 +405,17 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 | `unauthenticated` | `401` | 沒登入或 access token 無效 |
 | `invalid_credentials` | `401` | 登入失敗 |
 | `refresh_token_invalid` | `401` | refresh token 無效或過期 |
+| `api_key_invalid` | `401` | 伺服器金鑰無效或已撤銷 |
 | `forbidden` | `403` | 角色沒有權限 |
 | `link_not_found` | `404` | 連結不存在或不在範圍內 |
+| `send_not_found` | `404` | 發送不存在或不在範圍內 |
+| `api_key_not_found` | `404` | 伺服器金鑰不存在 |
 | `user_not_found` | `404` | 使用者不存在 |
 | `unsupported_media_type` | `415` | 不是 `application/json` |
 | `validation_failed` | `422` | 欄位驗證失敗，細節在 `errors` |
 | `conflict` | `409` | 欄位值和既有資料衝突，細節在 `errors` |
-| `invalid_url`、`invalid_code`、`invalid_expiry`、`invalid_channel`、`invalid_campaign`、`field_not_editable`、`batch_too_large`、`invalid_email`、`invalid_password`、`invalid_role`、`invalid_team`、`invalid_team_name` | `422`（放在 `errors` 裡） | 各欄位的驗證錯誤 |
-| `code_taken`、`email_taken`、`team_name_taken` | `409`（放在 `errors` 裡） | 短碼、email、團隊名稱已被使用 |
+| `invalid_url`、`invalid_code`、`invalid_expiry`、`invalid_channel`、`invalid_campaign`、`field_not_editable`、`batch_too_large`、`invalid_recipients`、`invalid_recipient_ref`、`invalid_segments`、`invalid_click_id`、`invalid_order_ref`、`invalid_amount`、`invalid_converted_at`、`invalid_api_key_name`、`invalid_email`、`invalid_password`、`invalid_role`、`invalid_team`、`invalid_team_name` | `422`（放在 `errors` 裡） | 各欄位的驗證錯誤 |
+| `code_taken`、`email_taken`、`team_name_taken`、`conversion_conflict` | `409`（放在 `errors` 裡） | 短碼、email、團隊名稱已被使用；同一筆訂單已用不同內容回報過 |
 | `too_many_attempts`、`rate_limited` | `429` | 登入嘗試過多、一般限流 |
 | `internal_error` | `500` | 未預期的錯誤 |
 | `dependency_unavailable` | `503` | 資料庫或快取不可用 |
@@ -360,7 +446,7 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 | `/login` | 登入 | `POST /api/auth/login` |
 | `/` | 導向 `/links` | — |
 | `/links` | 我的連結（範圍依角色） | `GET /api/links` |
-| `/links/new` | 建立連結 | `POST /api/links`、`POST /api/links/batch` |
+| `/links/new` | 建立連結；行銷主管以上可上傳收件人名單建立發送 | `POST /api/links`、`POST /api/sends` |
 | `/links/:code` | 連結的設定與簡單點擊數 | `GET /api/links/{code}`、`PATCH /api/links/{code}` |
 
 ### 後台（web/admin，`/admin/` 底下）
@@ -368,10 +454,11 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 | 路徑 | 頁面 | 呼叫的 API | 角色 |
 | --- | --- | --- | --- |
 | `/admin/` | 依角色導向行銷或工程師的首頁 | `GET /api/auth/me` | 已登入 |
-| `/admin/campaigns` | 活動成效與管道比較，`?name=` 選活動 | `GET /api/stats/campaigns` | 行銷、`admin` |
+| `/admin/campaigns` | 活動成效：管道與客群比較、點擊、轉換與轉換金額，`?name=` 選活動；收件人連結的發送可匯出每位收件人的結果 | `GET /api/stats/campaigns`、`GET /api/sends`、`GET /api/sends/{id}/recipients/export` | 行銷、`admin` |
 | `/admin/links/:code` | 單一連結的點擊趨勢 | `GET /api/stats/links/{code}` | 行銷、`admin` |
 | `/admin/ops` | 連到 Grafana 的入口（請求 log、錯誤率、兩個後端的對照） | — | `engineer`、`admin` |
 | `/admin/users` | 使用者與角色管理 | `/api/users`、`/api/teams` | `admin` |
+| `/admin/api-keys` | 伺服器金鑰的建立與撤銷 | `/api/api-keys` | `admin` |
 
 **登入頁只有一個**，在前台的 `/login`。後台遇到 `401` 時導向 `/login?next=/admin/...`，登入後依 `next` 回到原頁。`next` 只接受以 `/` 開頭、而且不是 `//` 開頭的路徑，否則一律回到 `/`：不檢查的話，`?next=https://evil.example` 可以讓登入頁把人導到外部網站（open redirect）。
 
@@ -383,5 +470,5 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 
 ## 不在範圍內
 
-- **對外的 API 與版本號**：消費者只有自己的兩個前端，所以網址不帶版本號。觸發條件是開放給外部整合方或發佈 SDK：那時消費者不跟著部署，要在第一次對外發布前決定版本策略，並把已發布的端點視為只能向下相容地新增。
+- **整個 API 的版本號**：除了轉換回報，消費者只有自己的兩個前端，所以網址不帶版本號。轉換回報與 `tc` 參數已經是對外的契約，相容規則寫在〈轉換回報〉。其他端點開放給外部整合方或發佈 SDK 時，再決定整體的版本策略。
 - **對外的狀態頁**：見 [系統設計](system-design.md)〈健康檢查〉的〈對外的狀態頁〉。
