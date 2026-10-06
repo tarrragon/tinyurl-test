@@ -72,7 +72,7 @@
 
 **目標**：讓行銷看得到活動成效、工程師看得到系統狀態。
 
-- 排程把 `click_events` 彙總到 `click_daily`；兩個後端實作統計 API。
+- 排程把 `click_events` 以 UTC 的整點為單位彙總到 `click_hourly`；兩個後端實作統計 API，依查詢的時區（`tz`，預設 `REPORT_TIMEZONE`）把小時組成日。
 - `web/admin` 建出後台：行銷看依管道、活動、時間的點擊數；工程師看請求 log 與錯誤率；管理者管理使用者與角色。
 
 **依賴**：階段三（結構化 log 與 metrics）、階段五。
@@ -82,10 +82,10 @@
 
 **目標**：讓行銷回答三類問題：特定客群對一次發送的反應、廣告與簡訊帶來多少購買、收到通知的客人有沒有回來。設計見 [系統設計](system-design.md)〈行銷分析：收件人對應、點擊識別碼與轉換回報〉。
 
-- 資料表在階段一的 migration 就已建好（`sends`、`link_recipients`、`conversions`、`api_keys`、`campaign_daily`、`recipient_daily`、`analytics_watermarks`），這個階段只寫程式。
+- 資料表在階段一的 migration 就已建好（`sends`、`link_recipients`、`conversions`、`api_keys`、`campaign_hourly`、`recipient_hourly`、`analytics_dirty_hours`），這個階段只寫程式。
 - `POST /api/sends` 收收件人清單（`recipient_ref` 與客群標籤），寫入 `sends` 與 `link_recipients`；`GET /api/sends`；個資刪除的 `POST /api/recipients/erase`。
 - 伺服器金鑰（`api_keys`）與 `POST /api/conversions`；後台的金鑰管理頁。
-- 點擊分類規則放進兩個後端共用的設定檔；排程依 [資料表與程式介面](data-model.md)〈分析彙總的重算〉重算 `campaign_daily` 與 `recipient_daily`（advisory lock、水位、歸因期間）。
+- 點擊分類規則放進兩個後端共用的設定檔；排程依 [資料表與程式介面](data-model.md)〈分析彙總的重算〉重算 `campaign_hourly` 與 `recipient_hourly`（交易層級的建議鎖、待重算的小時、歸因期間），並輸出最後一次成功重算的時間這個指標。
 - 統計 API 加上客群與轉換；每位收件人結果的 CSV 匯出；後台的活動頁顯示客群比較與轉換。
 - 契約測試涵蓋：轉換重送回 `200` 不重複計算、內容不同回 `409`；別的團隊的金鑰回報的轉換不進報表；清除收件人對應並重算後，匯出檔裡沒有那位客人而活動與客群的數字不變；兩個後端對同一批點擊與轉換重算出一樣的彙總；`marketing` 看到的活動統計只含自己建立的連結。
 
@@ -103,9 +103,10 @@
 | 轉址快取（Valkey，建立時同時寫入） | 轉址每次都查 PostgreSQL，連線數與延遲隨流量上升 | 轉址基準、爆紅連結 |
 | Nginx 限流 | 單一來源能打滿服務 | 限流驗證 |
 | 快取「不存在」的結果 | 錯誤短碼重複打到資料庫 | 短碼掃描 |
-| 非同步點擊寫入（stream＋背景程序＋consumer group，Valkey 開 AOF；寫入用 `ON CONFLICT (click_id) DO NOTHING`） | 尖峰時同步寫入拉高轉址延遲、佔滿連線 | 轉址基準、長時間穩定、點擊數比對（含停掉一個消費者、讓訊息重新投遞的情形） |
+| 非同步點擊寫入（stream＋背景程序＋consumer group，Valkey 開 AOF；寫入用 `ON CONFLICT (click_id) DO NOTHING`，每一批依 `click_id` 排序，同一個交易裡登記待重算的小時，見 [資料表與程式介面](data-model.md)〈分析彙總的重算〉） | 尖峰時同步寫入拉高轉址延遲、佔滿連線 | 轉址基準、長時間穩定、點擊數比對（含停掉一個消費者、讓訊息重新投遞的情形） |
 | Bloom filter | 隨機掃描的短碼每次都不同，快取「不存在」擋不住 | 短碼掃描 |
-| `click_events` 依時間分割（`click_id` 的唯一索引改成 `(click_id, clicked_at)`，轉換對應點擊改用點擊識別碼加時間範圍查詢） | 刪除過期資料變慢、索引變大 | 長時間穩定；分割前後各量一次彙總重算的耗時 |
+| `click_events` 依時間分割（主鍵改成 `(click_id, clicked_at)`、拿掉 `id`，背景程序的衝突目標跟著改成 `ON CONFLICT (click_id, clicked_at)`，轉換對應點擊改用點擊識別碼加時間範圍查詢） | 刪除過期資料變慢、索引變大 | 長時間穩定；分割前後各量一次彙總重算的耗時 |
+| 背景程序在批次寫入的交易裡累加 `click_hourly`（`INSERT ... ON CONFLICT DO NOTHING RETURNING` 只回傳真正寫進去的列，重送不重複計算；從某一個整點起改由累加維護，重算只處理那之前的小時；活動與收件人的彙總仍由重算維護） | 排程每一輪重讀兩個小時的點擊，佔用主庫的讀取 | 轉址基準、長時間穩定、點擊數比對（含重新投遞） |
 | 關掉 ORM 的預設交易、熱路徑改寫原始 SQL | 轉址與點擊寫入的每個請求，ORM 多送出的 SQL 與來回拉高延遲（GORM 的預設交易、Eloquent 建立 model 物件） | 轉址基準 |
 | 統計查詢讀 PostgreSQL 唯讀副本（依用途分流，其餘查詢照舊讀主庫；Go 用 dbresolver 的具名 resolver、Laravel 用另一個只連副本的資料庫連線） | 後台統計查詢與轉址同時跑時，轉址的 p99 升高、主庫的連線數或 CPU 有一部分花在統計查詢上 | 混合流量 |
 | 快取伺服器比較（Valkey、Dragonfly） | 比較兩者在同一條件下的差異 | 轉址基準、爆紅連結 |

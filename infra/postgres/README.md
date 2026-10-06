@@ -9,10 +9,10 @@
 - `teams`、`users`、`refresh_tokens`：登入與權限，角色放在 `users.role`。
 - `links`：短碼（唯一索引，兩個後端產生的短碼靠它判斷重複）、原始網址、管道、活動、建立者、到期與停用時間。
 - `click_events`：每一次轉址一筆。第一版不分割，階段八的實驗改成依時間做 [partition](https://www.postgresql.org/docs/current/ddl-partitioning.html)，超過保留期的分割區整個刪除。
-- `click_daily`：每日彙總，後台報表讀這張。
+- `click_hourly`：每條連結每小時（UTC）的點擊數，後台報表讀這張，依查詢的時區組成日。
 - `sends`、`link_recipients`：每個收件人一條連結的發送，收件人只存 CRM 的識別碼與發送當下的客群。
 - `conversions`、`api_keys`：電商用伺服器金鑰回報的轉換。
-- `campaign_daily`、`recipient_daily`、`analytics_watermarks`：行銷分析的每日彙總與重算水位。
+- `campaign_hourly`、`recipient_hourly`、`analytics_dirty_hours`：行銷分析的每小時彙總與待重算的小時。
 
 ## 誰管 schema
 

@@ -113,29 +113,30 @@ CREATE UNIQUE INDEX click_events_click_id_key ON click_events (click_id);
 CREATE INDEX click_events_link_id_idx ON click_events (link_id, clicked_at);
 ```
 
-- **第一版不分割（partition）**：依時間分割是[開發順序](roadmap.md)〈階段八：優化實驗〉裡的一個實驗，要先量出不分割時刪除過期資料有多慢。分割後主鍵要改成 `(id, clicked_at)`（PostgreSQL 要求分割表的主鍵包含分割欄位，見 [系統設計](system-design.md)〈資料模型〉），改的方式是新建分割表、搬資料、換名，這個 migration 本身就是實驗的一部分，兩套 migration 都要寫。
+- **第一版不分割（partition）**：依時間分割是[開發順序](roadmap.md)〈階段八：優化實驗〉裡的一個實驗，要先量出不分割時刪除過期資料有多慢。分割後 `id` 已經沒有用途（彙總依時間範圍重算、轉換依 `click_id` 對應），主鍵改成 `(click_id, clicked_at)`、拿掉 `id`（PostgreSQL 要求分割表的唯一約束包含分割欄位，見 [系統設計](system-design.md)〈資料模型〉），改的方式是新建分割表、搬資料、換名，這個 migration 本身就是實驗的一部分，兩套 migration 都要寫。
 - **`clicked_at` 由程式給值，沒有 `DEFAULT`**：它是轉址發生的時間，不是寫進資料庫的時間。階段八改成非同步寫入之後，兩者會差幾秒，程式在轉址當下就要記下時間。
 - **`expired`**：轉址時連結已到期或已停用、訪客被導到首頁的點擊為 `true`（見 [系統設計](system-design.md)〈到期之後〉）。
 - **欄位不設長度約束，由程式截斷**：`user_agent` 與 `referer` 超過 512 字元時截斷再寫入。其他資料表靠約束擋錯誤值；這張表擋下的話，失敗的是一筆點擊紀錄，點擊就少算了。
-- `click_events_clicked_at_idx` 給彙總用：排程依時間範圍讀出一天的點擊。
-- **`click_id`** 是轉址時由程式產生的 UUIDv7，同時附在轉址的目標網址上（見 [系統設計](system-design.md)〈點擊識別碼與轉換回報〉）。`click_events_click_id_key` 讓彙總時依點擊識別碼對到轉換；改成分割表之後，唯一索引必須包含分割欄位，會改成 `(click_id, clicked_at)`，對應時改用點擊識別碼加時間範圍查。
+- `click_events_clicked_at_idx` 給彙總用：排程依時間範圍讀出要重算的那幾個小時的點擊。
+- **`click_id`** 是轉址時由程式產生的 UUIDv7，同時附在轉址的目標網址上（見 [系統設計](system-design.md)〈點擊識別碼與轉換回報〉）。`click_events_click_id_key` 讓彙總時依點擊識別碼對到轉換；改成分割表之後，唯一約束必須包含分割欄位，`click_events_click_id_key` 由新的主鍵 `(click_id, clicked_at)` 取代，背景程序寫入的衝突目標也要跟著改成 `ON CONFLICT (click_id, clicked_at)`（只改約束不改 SQL，PostgreSQL 回 `there is no unique or exclusion constraint matching the ON CONFLICT specification`），轉換對應點擊時改用點擊識別碼加時間範圍查。重送的事件 `clicked_at` 相同，所以仍然擋得住，前提是 `clicked_at` 由轉址當下的程式給值、跟著事件進 stream。
 - `click_events_link_id_idx` 給依連結查點擊的彙總與下鑽。
 
-### click_daily
+### click_hourly
 
 ```sql
-CREATE TABLE click_daily (
-  link_id bigint NOT NULL REFERENCES links (id),
-  day     date   NOT NULL,
-  clicks  bigint NOT NULL,
-  CONSTRAINT click_daily_pkey         PRIMARY KEY (link_id, day),
-  CONSTRAINT click_daily_clicks_check CHECK (clicks >= 0)
+CREATE TABLE click_hourly (
+  link_id bigint      NOT NULL REFERENCES links (id),
+  hour    timestamptz NOT NULL,
+  clicks  bigint      NOT NULL,
+  CONSTRAINT click_hourly_pkey         PRIMARY KEY (link_id, hour),
+  CONSTRAINT click_hourly_clicks_check CHECK (clicks >= 0)
 );
 ```
 
-- `day` 是 UTC 的日期，與 API 的統計日期相同。
+- `hour` 是 UTC 的整點（`date_trunc('hour', clicked_at, 'UTC')`），型別是 `timestamptz`：宣告成不帶時區的 `timestamp` 時，寫入會依連線的時區轉換，整點就不再是 UTC 的整點。
+- **以小時為單位**，有兩個理由。一是統計 API 依查詢的時區把小時組成日（見 [API 與路由規格](api.md)〈點擊統計〉），台北的一天是 UTC 前一天 16 時到當天 16 時，以 UTC 的日為單位存就組不出來。二是重算的成本：以日為單位時，每一輪都要重讀當天到目前為止的全部點擊，越接近午夜越慢；以小時為單位，每一輪聚合的點擊只有要重算的那幾個小時（歸因另外依 `click_id` 經索引查，見〈分析彙總的重算〉）。時差不是整小時的時區（例如 +5:30）組不出來，目前的使用者不受影響。
 - `clicks` 包含已到期的點擊：行銷要知道舊簡訊還有多少人點，被導到首頁的那些也算在活動成效裡。
-- **彙總用重算而不是累加**：排程每次重算今天與昨天的數字，以 `INSERT ... ON CONFLICT (link_id, day) DO UPDATE SET clicks = EXCLUDED.clicks` 寫入。重算的結果與執行幾次無關，Go 與 Laravel 的排程同時跑、或同一個排程重跑，數字都不會重複加。
+- **彙總用重算而不是累加**：重算的規則見〈分析彙總的重算〉，重算的結果與執行幾次無關。例外是階段八的實驗：背景程序在批次寫入的交易裡累加這張表，見那一節的〈累加實驗與重算的分工〉。
 
 ### sends
 
@@ -196,13 +197,13 @@ CREATE TABLE conversions (
   CONSTRAINT conversions_order_ref_check CHECK (char_length(order_ref) BETWEEN 1 AND 100)
 );
 CREATE INDEX conversions_click_id_idx    ON conversions (click_id);
-CREATE INDEX conversions_received_at_idx ON conversions (received_at);
+CREATE INDEX conversions_converted_at_idx ON conversions (converted_at);
 ```
 
 - **`click_id` 不設外鍵**：轉換可能比點擊事件先寫進資料庫（非同步點擊寫入），而且 `click_events` 改成分割表之後，外鍵要參照的唯一約束會包含分割欄位。對不到點擊的轉換照樣存下來，彙總時不計入。
 - `conversions_team_order_key` 讓電商重送同一筆回報時不會多記一次，見 [API 與路由規格](api.md)〈`POST /api/conversions`〉。兩個請求同時送來時，後到的那一個撞上這個約束，程式接著讀出既有的那一筆，依內容相不相同回 `200` 或 `409`。
 - `amount` 的上限是 `numeric(12,2)` 能存的 9,999,999,999.99，API 先擋，不讓超過的值在資料庫溢位而回 `500`。金額只有一種幣別（新台幣，假設）；要支援多幣別時加 `currency` 欄位，彙總依幣別分開。
-- `conversions_received_at_idx` 給彙總找出「上次之後收到的轉換」，見〈分析彙總的重算〉。
+- `conversions_converted_at_idx` 給重算讀出某幾個小時成交的轉換；`conversions_click_id_idx` 給背景程序找出「這一批點擊對到的轉換」，見〈分析彙總的重算〉。
 
 ### api_keys
 
@@ -222,71 +223,112 @@ CREATE TABLE api_keys (
 
 - `key_hash` 的算法與 refresh token 相同（SHA-256 的 32 bytes），見 [登入與權限](auth-and-roles.md)〈伺服器金鑰：轉換回報〉。
 
-### campaign_daily
+### campaign_hourly
 
 ```sql
-CREATE TABLE campaign_daily (
+CREATE TABLE campaign_hourly (
   team_id       bigint        NOT NULL,
   created_by    bigint        NOT NULL,
   campaign      text          NOT NULL,
   channel       text          NOT NULL,
   send_id       bigint        NOT NULL,
   segment       text          NOT NULL,
-  day           date          NOT NULL,
+  hour          timestamptz   NOT NULL,
   clicks        bigint        NOT NULL,
   human_clicks  bigint        NOT NULL,
   unique_clicks bigint        NOT NULL,
   conversions   bigint        NOT NULL,
   revenue       numeric(14,2) NOT NULL,
-  CONSTRAINT campaign_daily_pkey PRIMARY KEY (team_id, created_by, campaign, channel, send_id, segment, day)
+  CONSTRAINT campaign_hourly_pkey PRIMARY KEY (team_id, created_by, campaign, channel, send_id, segment, hour)
 );
-CREATE INDEX campaign_daily_campaign_day_idx ON campaign_daily (campaign, day);
+CREATE INDEX campaign_hourly_campaign_hour_idx ON campaign_hourly (campaign, hour);
 ```
 
-- `created_by` 與 `team_id` 取自連結，讓統計 API 套得上和連結列表相同的權限範圍（見〈權限範圍〉）。主鍵以 `team_id`、`created_by` 開頭，`marketing` 的查詢用得到；`marketing_lead`（團隊加活動）與 `admin`（只有活動）的查詢跳過了 `created_by`，用 `campaign_daily_campaign_day_idx`。沒有團隊的連結（`admin` 建立的單一連結）`team_id` 記 `0`：主鍵的欄位不能是 NULL。
+- `created_by` 與 `team_id` 取自連結，讓統計 API 套得上和連結列表相同的權限範圍（見〈權限範圍〉）。主鍵以 `team_id`、`created_by` 開頭，`marketing` 的查詢用得到；`marketing_lead`（團隊加活動）與 `admin`（只有活動）的查詢跳過了 `created_by`，用 `campaign_hourly_campaign_hour_idx`。沒有團隊的連結（`admin` 建立的單一連結）`team_id` 記 `0`：主鍵的欄位不能是 NULL。
 - `send_id` 用 `0` 代表活動共用的連結（不屬於任何發送）；收件人連結記它的發送，同一個活動的多次發送（例如補發提醒）分得開。
 - `segment` 用空字串代表「不分客群」：每條連結都出現在這一列；收件人連結另外在自己的每一個客群各出現一次。標籤至少一個字元，不會和空字串撞在一起。
-- `unique_clicks`：收件人連結只算在那位收件人**第一次人為點擊的那一天**，所以依日期加總不會重複；活動共用的連結以同一天、同一個 IP 加 User-Agent 算一次，跨日加總是估計值。
-- **轉換算在成交的那一天**（`converted_at` 的 UTC 日期），歸在它對到的那次點擊的連結上。
+- `hour` 與 `click_hourly` 相同，是 UTC 的整點、`timestamptz`。
+- `unique_clicks`：收件人連結只算在那位收件人**第一次人為點擊的那個小時**，所以依時間加總不會重複；活動共用的連結以同一小時、同一個 IP 加 User-Agent 算一次，跨小時加總是估計值（同一個人在兩個小時各點一次會算兩次）。
+- **轉換算在成交的那個小時**（`converted_at` 截到 UTC 整點），歸在它對到的那次點擊的連結上。
 
-### recipient_daily
+### recipient_hourly
 
 ```sql
-CREATE TABLE recipient_daily (
+CREATE TABLE recipient_hourly (
   link_id        bigint        NOT NULL REFERENCES links (id),
-  day            date          NOT NULL,
+  hour           timestamptz   NOT NULL,
   first_click_at timestamptz,
   human_clicks   bigint        NOT NULL,
   conversions    bigint        NOT NULL,
   revenue        numeric(14,2) NOT NULL,
-  CONSTRAINT recipient_daily_pkey PRIMARY KEY (link_id, day)
+  CONSTRAINT recipient_hourly_pkey PRIMARY KEY (link_id, hour)
 );
 ```
 
-- 只有收件人連結、而且那一天有人為點擊或轉換時才有這一列。`first_click_at` 是那一天第一次**人為**點擊的時間，預覽與掃描的點擊不算。匯出每位收件人的結果時，以 `link_recipients` 為主表（排除已清除的列，`recipient_ref IS NOT NULL`）`LEFT JOIN` 這張表、依連結加總，沒有點擊也沒有轉換的收件人照樣出現在檔案裡，值是 0 與空白：「沒回來」正是這份檔案要回答的問題之一。
-- 用日為單位而不是每位收件人一列，是為了和 `campaign_daily` 用同一種重算方式；每位收件人一列的話，重算要讀那條連結的全部點擊，而 `click_events` 只保留 90 天，超過保留期的點擊一重算就消失。這張表不隨點擊事件的保留期刪除，也是判斷「第一次人為點擊」的依據，見〈分析彙總的重算〉。
+- 只有收件人連結、而且那個小時有人為點擊或轉換時才有這一列。轉換數與金額算在成交的那個小時，和 `campaign_hourly` 相同。`first_click_at` 是那個小時第一次**人為**點擊的時間，預覽與掃描的點擊不算。匯出每位收件人的結果時，以 `link_recipients` 為主表（排除已清除的列，`recipient_ref IS NOT NULL`）`LEFT JOIN` 這張表、依連結加總，沒有點擊也沒有轉換的收件人照樣出現在檔案裡，值是 0 與空白：「沒回來」正是這份檔案要回答的問題之一。
+- 以時間為單位而不是每位收件人一列，是為了和 `campaign_hourly` 用同一種重算方式；每位收件人一列的話，重算要讀那條連結的全部點擊，而 `click_events` 只保留 90 天，超過保留期的點擊一重算就消失。這張表不隨點擊事件的保留期刪除，也是判斷「第一次人為點擊」的依據，見〈分析彙總的重算〉。
 
 ### 分析彙總的重算
 
-兩張分析彙總表與 `click_daily` 由同一個排程重算，規則寫死在這裡，兩個後端重算出的數字才會一樣：
+三張彙總表（`click_hourly`、`campaign_hourly`、`recipient_hourly`）由同一個排程重算，規則寫死在這裡，兩個後端重算出的數字才會一樣。
 
-- **鎖、水位與重算在同一個交易裡**：重算交易的第一個語句是 `SELECT pg_try_advisory_xact_lock(7234001)`（鎖鍵是固定的常數，兩個後端寫同一個值），回 `false` 就結束交易、跳過這一輪。用交易層級的鎖，交易結束時自動釋放：GORM 與 Laravel 從連線池拿連線，session 層級的鎖（`pg_try_advisory_lock`）取鎖與解鎖可能落在不同的連線上，解不開的鎖會留在池裡那條連線上，之後每一輪都取不到。Go 與 Laravel 的排程同時在跑時，這把鎖讓用舊快照算出的結果不會晚一步覆寫新的結果。
-- **每一輪重算的日期**：今天與昨天（UTC），加上「上次之後收到的轉換」的成交日期。「上次」是存在 `analytics_watermarks` 的時間（下面的 SQL，`name` 是 `'conversions'` 的那一列），每一輪取 `received_at > last_received_at − 10 分鐘` 的轉換，往回多看 10 分鐘，蓋過交易提交順序與時鐘的誤差；重複算到的轉換只會讓同一天被重算兩次，結果不變。這一輪結束時，水位前進到這一輪讀到的轉換裡最大的 `received_at`；這一輪沒有讀到轉換時水位不動。
-- **重算那些日期的每一列**：從 `click_events`、`conversions`、`link_recipients` 算出那一天的值，以 `INSERT ... ON CONFLICT ... DO UPDATE` 覆寫；那一天原本有、這次算不出來的列刪掉。重跑幾次結果都一樣。讀的點擊不只那幾天：轉換要對到成交前最多 7 天的點擊，所以點擊的讀取範圍往前多 7 天。
-- **先重算 `recipient_daily`，再重算 `campaign_daily`**：收件人連結的 `unique_clicks` 算在第一次人為點擊的那一天，「是不是第一次」看的是 `recipient_daily` 裡這條連結有沒有更早、`human_clicks > 0` 的日期，不看 `click_events`。`recipient_daily` 不隨點擊事件的保留期刪除，所以收件人在 90 天前點過、今天又點，今天不會再算一次。
-- **歸因**：一筆轉換對到 `click_id` 相同、而且屬於同一個團隊的點擊，成交時間落在點擊時間的前 5 分鐘到後 7 天之間（前 5 分鐘容許電商的時鐘稍慢）。對到已到期連結的點擊（被轉到首頁）也算；轉換一定代表有人下單，所以不看那次點擊被分類成人為還是非人為。
-- **全量重算**：點擊分類規則或歸因期間改了之後手動觸發，範圍是完整落在 `click_events` 保留期內的日期（保留期起點的隔天起；起點那一天可能已被清掉一部分，重算會少算）。保留期外的日期維持原值，因為原始事件已經刪掉。
+**一輪重算的範圍與順序**
+
+- **鎖、範圍與重算在同一個交易裡**，隔離等級是 PostgreSQL 預設的 READ COMMITTED。交易的第一個語句是 `SELECT pg_try_advisory_xact_lock(1, 1)`，回 `false` 就結束交易、跳過這一輪。鍵用兩個 int 的形式（第一個是本專案的代號 `1`，第二個是功能代號，`1` 是這個排程），和 Atlas 這類 migration 工具自己用的單一 bigint 鍵分開；鍵的清單寫在這份文件，新功能要用建議鎖時在這裡登記。用交易層級的鎖，交易結束時自動釋放：GORM 與 Laravel 從連線池拿連線，session 層級的鎖（`pg_try_advisory_lock`）取鎖與解鎖可能落在不同的連線上，解不開的鎖會留在池裡那條連線上。兩個後端都用這把鎖，不用 Laravel 排程的 `onOneServer()` 或 `withoutOverlapping()`：它們的鎖在快取儲存上，和 Go 的建議鎖彼此看不見。
+- **逾時用 `SET LOCAL`**：取到鎖之後，交易裡執行 `SET LOCAL statement_timeout = '5min'` 與 `SET LOCAL idle_in_transaction_session_timeout = '1min'`（假設，依實際重算時間調整）。持有鎖的實例卡住時，其他實例每一輪都會跳過而且沒有紀錄，這兩個設定讓資料庫切斷它、鎖跟著釋放。用 `SET LOCAL` 而不是 `SET`：設定只在這個交易裡有效，連線還回池之後不會留給下一個使用者。
+- **要重算的小時**有三個來源，取聯集：
+  1. 從 `analytics_recompute_state.last_completed_hour` 的前一個小時，到目前這個小時的每一個整點。平常就是目前與前一個小時；重算停擺過（部署、鎖被卡住、排程掛掉）時，停擺期間的每一個整點都會被補算，不會因為「只重算目前與前一個小時」而永遠漏掉。
+  2. `analytics_dirty_hours` 裡登記的小時（見下方）。
+  3. 這一輪重算 `recipient_hourly` 時，某條連結「最早一個有人為點擊的小時」改變了，舊的與新的那個小時都加進來，在同一個交易裡重算 `campaign_hourly`（見〈收件人的「第一次」〉）。
+- **順序**：先重算 `recipient_hourly`，再重算 `campaign_hourly` 與 `click_hourly`。小時之間由舊到新。
+- **覆寫的寫法**：從 `click_events`、`conversions`、`link_recipients` 算出那個小時的值，以 `INSERT ... ON CONFLICT ... DO UPDATE SET ... WHERE 舊值 IS DISTINCT FROM 新值` 覆寫（值沒變的列不改寫，不留下多餘的死元組）；那個小時原本有、這次算不出來的列刪掉。重跑幾次結果都一樣。這句 SQL 兩個後端都直接寫原始 SQL：Laravel 查詢建構器的 `upsert()` 產生的 `on conflict ... do update set` 沒有 `WHERE`，所以 Laravel 用 `DB::statement()`；Go 用 GORM 的 `Raw`／`Exec`，或 `clause.OnConflict` 的 `Where`。
+- **結束**：重算完，在同一個交易裡把 `analytics_recompute_state` 的 `last_completed_hour` 設成目前這個小時、`last_success_at` 設成 `clock_timestamp()`，並刪除這一輪處理過的登記（見下方的版本條件）。
+
+**歸因與轉換的小時**
+
+- 一筆轉換對到 `click_id` 相同、而且屬於同一個團隊的點擊，成交時間落在點擊時間的前 5 分鐘到後 7 天之間（前 5 分鐘容許電商的時鐘稍慢）。對到已到期連結的點擊（被轉到首頁）也算；轉換一定代表有人下單，所以不看那次點擊被分類成人為還是非人為。
+- 轉換算在**成交的那個小時**。重算某個小時的轉換時，讀 `converted_at` 落在那個小時的轉換（`conversions_converted_at_idx`），再依它們的 `click_id` 經 `click_events_click_id_key` 查對到的點擊，條件是 `clicked_at` 介於 `converted_at − 7 天` 與 `converted_at + 5 分鐘`。不是把那 7 天的點擊全部讀出來。
+- 點擊比轉換晚寫進來時（階段八的積壓），轉換的那個小時已經被重算過、當時對不到點擊。所以背景程序寫入一批點擊時，在同一個交易裡查 `conversions WHERE click_id = ANY(這一批的 click_id)`，把查到的成交小時一起登記成待重算的小時。
+
+**收件人的「第一次」**
+
+- 收件人連結的 `unique_clicks` 算在第一次人為點擊的那個小時，「是不是第一次」看的是 `recipient_hourly` 裡這條連結有沒有更早、`human_clicks > 0` 的列，不看 `click_events`。`recipient_hourly` 不隨點擊事件的保留期刪除，所以收件人在 90 天前點過、今天又點，今天不會再算一次。
+- 較早的小時事後才出現人為點擊（積壓之後寫進來的點擊、或分類規則改了），「最早的小時」就會往前移；原本被算成第一次的那個較晚的小時也要重算，否則同一位收件人會被算兩次。反過來，較早的小時事後變成沒有人為點擊時，最早的小時往後移，新的那個小時要補算。所以重算 `recipient_hourly` 時比較每條連結重算前後的最早小時，有變的把舊的與新的都併進這一輪（上面範圍的第 3 個來源）。
+
+**待重算的小時**
 
 ```sql
-CREATE TABLE analytics_watermarks (
-  name             text        NOT NULL,
-  last_received_at timestamptz NOT NULL,
-  CONSTRAINT analytics_watermarks_pkey PRIMARY KEY (name)
+CREATE TABLE analytics_dirty_hours (
+  hour    timestamptz NOT NULL,
+  version bigint      NOT NULL DEFAULT 1,
+  CONSTRAINT analytics_dirty_hours_pkey PRIMARY KEY (hour)
 );
 ```
 
-- 兩套 migration 在建表後都插入初始的一列：`INSERT INTO analytics_watermarks (name, last_received_at) VALUES ('conversions', '-infinity')`，第一輪因此讀到全部的轉換；兩個後端都不必處理「讀不到這一列」的情形。CI 的 schema 比對連這一列的內容一起比。
-- 水位與重算在同一個交易裡更新：重算失敗時水位不前進，下一輪重算同一批日期。
+- 登記：轉換回報在寫入轉換的同一個交易裡登記成交的小時；階段八的背景程序在每一批寫入的交易裡登記這一批點擊碰到的小時，以及這一批點擊對到的轉換的成交小時。登記一律寫成 `INSERT ... ON CONFLICT (hour) DO UPDATE SET version = analytics_dirty_hours.version + 1`，一次登記多個小時時先依小時由舊到新排序（兩個背景程序以相反的順序登記同一組小時會死結）。
+- 刪除：重算在交易開頭讀出要處理的 `(hour, version)`，不加鎖；結尾刪除時帶著讀到的版本：`DELETE FROM analytics_dirty_hours WHERE hour = $1 AND version = $2`。重算讀完之後才有人登記同一個小時時，`version` 已經加一，這一列不會被刪，下一輪會再重算一次。只用 `ON CONFLICT DO NOTHING` 登記的話，那次登記碰到既有的列什麼都不做，接著被重算的刪除一起刪掉，那筆資料就永久漏算。
+- 這張表取代以 `conversions.received_at` 當「已處理位置」的做法：`received_at` 的 `DEFAULT now()` 是交易開始的時間，寫入交易較長時，它會早於重算已經推進過的位置而被漏掉；登記「需要重算的小時」沒有這個順序問題。
+
+```sql
+CREATE TABLE analytics_recompute_state (
+  name                text        NOT NULL,
+  last_completed_hour timestamptz NOT NULL,
+  last_success_at     timestamptz NOT NULL,
+  CONSTRAINT analytics_recompute_state_pkey PRIMARY KEY (name)
+);
+```
+
+- 只有一列（`name = 'hourly'`）。兩套 migration 在建表後都插入這一列：`last_completed_hour` 是 migration 執行時的前一個整點，`last_success_at` 是 migration 執行的時間。兩個後端都不必處理「讀不到這一列」的情形。
+- **監控讀這一列，不讀各實例的記憶體**：沒搶到鎖的實例不會更新任何東西，Laravel 的排程又是執行完就結束的行程，記在行程裡的指標都不可靠。指標 `tinyurl_analytics_recompute_lag_seconds` 是「現在減去 `last_success_at`」，由兩個後端的 metrics 端點在被收集時從資料庫讀出；超過 10 分鐘（假設）告警。`analytics_dirty_hours` 裡最舊的小時距離現在多久，是另一個指標 `tinyurl_analytics_dirty_hour_oldest_seconds`。階段八加上非同步寫入之後，另外監控 stream 未消費的數量與「寫入當下的時間減去 `clicked_at`」的最大值。
+
+**全量重算**
+
+- 點擊分類規則或歸因期間改了之後手動觸發，範圍是完整落在 `click_events` 保留期內的小時（保留期起點那一天可能已被清掉一部分，從隔天起算）。日期由舊到新，一天一個交易；每個交易用會等待的 `pg_advisory_xact_lock(1, 1)` 取同一把鎖（用不等待的版本，剛好碰上例行重算的那一天會被跳過而沒有錯誤），並在交易裡先處理 `recipient_hourly` 再處理 `campaign_hourly`，「第一次」的判斷才會用到新規則下較早日期的值。全量重算的交易較長，逾時另外設（例如 `SET LOCAL statement_timeout = '30min'`）；它持鎖期間例行重算會跳過，`tinyurl_analytics_recompute_lag_seconds` 跟著上升，告警時要先確認是不是全量重算在跑。保留期外的小時維持原值，因為原始事件已經刪掉。
+- `click_hourly` 不依分類規則，全量重算不動它。
+
+**累加實驗與重算的分工**
+
+- 階段八的實驗讓背景程序在批次寫入的交易裡累加 `click_hourly`（`INSERT ... ON CONFLICT DO NOTHING RETURNING` 只回傳真正寫進去的列）。實驗開始後，`click_hourly` 從某一個整點起改由累加維護，重算只處理那個整點之前的小時，兩者不同時寫同一個小時；累加依 `(link_id, hour)` 排序。`campaign_hourly` 與 `recipient_hourly` 依分類規則與收件人，仍由重算維護。
 
 ### refresh_tokens
 
@@ -317,7 +359,7 @@ CREATE INDEX refresh_tokens_user_id_idx ON refresh_tokens (user_id);
 | 立即撤銷 | `revoked_user:{使用者 ID}` | 撤銷當下的 Unix 時間（秒） | 15 分鐘，見 [登入與權限](auth-and-roles.md)〈效期與撤銷〉 |
 
 - 快取的值存「判斷要轉到哪裡」需要的資料，不存判斷的結果：到期時間存在快取裡，每次轉址用當下的時間比較，連結在快取的 24 小時內到期也會正確轉到首頁。
-- 非同步點擊寫入用 stream `clicks`，consumer group `click_writers`。每筆事件的欄位與 `click_events` 相同：`click_id`（UUID 字串）、`link_id`、`clicked_at`（RFC 3339、UTC、到毫秒）、`expired`（`1` 或 `0`）、`ip`、`user_agent`、`referer`。背景程序以 `INSERT ... ON CONFLICT (click_id) DO NOTHING` 寫入：consumer group 重新投遞同一筆事件時（例如原本的消費者處理到一半當掉，訊息被另一個消費者接手），第二次寫入被唯一索引擋下而不是讓整批失敗，`click_id` 因此也是點擊寫入冪等的依據。
+- 非同步點擊寫入用 stream `clicks`，consumer group `click_writers`。每筆事件的欄位與 `click_events` 相同：`click_id`（UUID 字串）、`link_id`、`clicked_at`（RFC 3339、UTC、到毫秒）、`expired`（`1` 或 `0`）、`ip`、`user_agent`、`referer`。背景程序以 `INSERT ... ON CONFLICT (click_id) DO NOTHING` 寫入：consumer group 重新投遞同一筆事件時（例如原本的消費者處理到一半當掉，訊息被另一個消費者接手），第二次寫入被唯一索引擋下而不是讓整批失敗，`click_id` 因此也是點擊寫入冪等的依據。每一批寫入前依 `click_id` 排序：Go 與 Laravel 的背景程序可能拿到重疊的事件（待處理的訊息被另一個消費者接手時），兩批以相反的順序插入時會死結。同一個交易裡登記這一批碰到的小時與這一批點擊對到的轉換的成交小時，小時也先排序（見〈分析彙總的重算〉的〈待重算的小時〉）。
 
 ## 程式介面
 
@@ -336,11 +378,11 @@ CREATE INDEX refresh_tokens_user_id_idx ON refresh_tokens (user_id);
 | `LinkStore` | 連結的建立、查詢、列表、修改 | PostgreSQL | — |
 | `UserStore`、`TeamStore`、`RefreshTokenStore` | 使用者、團隊、refresh token 的讀寫 | PostgreSQL（階段四） | — |
 | `RevocationStore` | 寫入與查詢立即撤銷 | Valkey（階段四） | — |
-| `StatsStore` | 查詢 `click_daily`；階段六也負責重算它，階段七起重算併入 `AnalyticsRecompute` | PostgreSQL（階段六） | 階段八：讀唯讀副本 |
+| `StatsStore` | 查詢 `click_hourly`；階段六也負責重算它，階段七起重算併入 `AnalyticsRecompute` | PostgreSQL（階段六） | 階段八：讀唯讀副本 |
 | `SendStore` | 建立發送時寫入發送與收件人對應、列出發送、個資刪除 | PostgreSQL（階段七） | — |
 | `ConversionStore`、`APIKeyStore` | 轉換回報的寫入、伺服器金鑰的建立與驗證 | PostgreSQL（階段七） | — |
-| `AnalyticsQuery` | 查詢 `campaign_daily`、`recipient_daily` 與匯出 | PostgreSQL（階段七） | 階段八：讀唯讀副本 |
-| `AnalyticsRecompute` | 依〈分析彙總的重算〉重算三張彙總表 | PostgreSQL（階段七） | 一律用主庫：它要寫入，也要讀到最新的點擊與轉換 |
+| `AnalyticsQuery` | 查詢 `campaign_hourly`、`recipient_hourly` 與匯出 | PostgreSQL（階段七） | 階段八：讀唯讀副本 |
+| `AnalyticsRecompute` | 依〈分析彙總的重算〉重算三張彙總表 | PostgreSQL（階段七） | 一律用主庫：它要寫入，也要讀到最新的點擊與轉換；階段八的實驗可改成背景程序在批次寫入的交易裡累加 `click_hourly` |
 | `ClickClassifier` | 依 User-Agent 判斷一筆點擊是不是人為的 | 讀共用設定檔的規則（階段七） | — |
 | `CodeGenerator` | 產生短碼 | 密碼學安全的亂數 | 測試用：回固定的序列，用來測碰撞重試 |
 | `ClickIDGenerator` | 產生點擊識別碼 | UUIDv7 | 測試用：回固定的值，用來測轉址的 `Location` |
@@ -392,7 +434,7 @@ type ClickRecorder interface {
 
 ### 權限範圍
 
-列表、單一連結與統計都依角色限制範圍（見 [API 與路由規格](api.md)〈「範圍依角色」的意思〉）。範圍從 JWT 的 claims 算成一個值，由 `LinkStore`、`StatsStore`、`SendStore` 與 `AnalyticsQuery` 放進查詢條件，不在 handler 裡先查再過濾。`links`、`sends`、`campaign_daily` 都有 `created_by` 與 `team_id`，條件套在這兩個欄位上：
+列表、單一連結與統計都依角色限制範圍（見 [API 與路由規格](api.md)〈「範圍依角色」的意思〉）。範圍從 JWT 的 claims 算成一個值，由 `LinkStore`、`StatsStore`、`SendStore` 與 `AnalyticsQuery` 放進查詢條件，不在 handler 裡先查再過濾。`links`、`sends`、`campaign_hourly` 都有 `created_by` 與 `team_id`，條件套在這兩個欄位上：
 
 | 角色 | 加進查詢的條件 |
 | --- | --- |
@@ -430,13 +472,13 @@ type ClickRecorder interface {
 | `User` | `users` | `const UPDATED_AT = null;`；隱藏 `password_hash`；改寫 `getAuthPassword()` 回傳 `password_hash`。不再需要 `Notifiable`、`remember_token` 與 `email_verified_at` |
 | `Link` | `links` | `const UPDATED_AT = null;`；`getRouteKeyName()` 回 `code`，路由參數直接用短碼；`expires_at`、`disabled_at` cast 成 `datetime` |
 | `ClickEvent` | `click_events` | `public $timestamps = false;`，`clicked_at` 由程式給值 |
-| `ClickDaily` | `click_daily` | 指定 `$table`（Laravel 預設會找複數的 `click_dailies`）；主鍵是兩個欄位，Eloquent 不支援複合主鍵，所以只用它讀，寫入的重算用查詢建構器（query builder）的 `upsert` |
+| `ClickHourly` | `click_hourly` | 指定 `$table`（Laravel 預設會找複數的 `click_hourlies`）；主鍵是兩個欄位，Eloquent 不支援複合主鍵，所以只用它讀；重算用 `DB::statement()` 執行原始 SQL，因為查詢建構器的 `upsert()` 不能帶 `DO UPDATE ... WHERE`（見〈分析彙總的重算〉） |
 | `RefreshToken` | `refresh_tokens` | `const UPDATED_AT = null;` |
 | `Send` | `sends` | `const UPDATED_AT = null;` |
 | `LinkRecipient` | `link_recipients` | 主鍵是 `link_id`（`$primaryKey = 'link_id'`、`$incrementing = false`）、`public $timestamps = false;`；`segments` 是 PostgreSQL 陣列，Eloquent 沒有內建的 cast，寫一個把 PHP 陣列與 `{a,b}` 文字互轉的自訂 cast |
 | `Conversion` | `conversions` | `public $timestamps = false;`，`received_at` 由資料庫給值 |
 | `ApiKey` | `api_keys` | `const UPDATED_AT = null;`；隱藏 `key_hash` |
-| `CampaignDaily`、`RecipientDaily` | `campaign_daily`、`recipient_daily` | 只用來讀，重算用查詢建構器的 `upsert`（與 `ClickDaily` 相同） |
+| `CampaignHourly`、`RecipientHourly` | `campaign_hourly`、`recipient_hourly` | 只用來讀，重算與 `ClickHourly` 相同，用 `DB::statement()` |
 
 - **API 回應用 API Resource 組，不用 model 的 `toJson()`**：model 預設序列化出來的時間帶小數秒與 `+00:00`，欄位名稱也是資料表的名稱（例如 `disabled_at`），而 API 要的是到秒的 `Z` 結尾時間與 `disabled` 布林值（見 [API 與路由規格](api.md)〈連結物件〉）。
 - 介面放在 `app/Contracts/`，實作放在 `app/Services/`，在 `AppServiceProvider` 綁定；階段八換實作時只改綁定。
@@ -452,6 +494,6 @@ API 回應的欄位不是資料表欄位的直接輸出，兩個後端照下表�
 | `short_url` | `SHORT_DOMAIN` 加 `code` |
 | `disabled` | `links.disabled_at IS NOT NULL` |
 | `created_by` | `links.created_by` 對應的 `users.id` 與 `users.email` |
-| `clicks_total` | `click_daily.clicks` 的加總；階段六之前沒有彙總，回 `0` |
+| `clicks_total` | `click_hourly.clicks` 的加總；階段六之前沒有彙總，回 `0` |
 | 使用者的 `team` | `users.team_id` 對應的團隊，沒有團隊時是 `null` |
 | 分頁的 `next_cursor` | 這一頁最後一筆的 `id`，轉成十進位字串 |

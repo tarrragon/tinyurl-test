@@ -160,7 +160,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 
 - `channel` 是 `sms`、`email`、`ad` 其中之一。
 - `short_url` 用 `SHORT_DOMAIN` 組出來，前端直接顯示與複製。
-- `clicks_total` 來自 `click_daily` 的加總，跟點擊統計一樣是最終一致，可能落後幾秒到一分鐘。
+- `clicks_total` 來自 `click_hourly` 的加總，跟點擊統計一樣是最終一致，可能落後幾秒到一分鐘。
 
 ### `POST /api/links`
 
@@ -254,23 +254,32 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 
 ## 點擊統計
 
-點擊統計讀排程重算的彙總表，是最終一致的數字，可能落後幾秒到一分鐘：單一連結讀 `click_daily`，活動與發送讀 `campaign_daily` 與 `recipient_daily`（重算規則見 [資料表與程式介面](data-model.md)〈分析彙總的重算〉）。日期以 UTC 的日為單位。
+點擊統計讀排程重算的彙總表，是最終一致的數字，可能落後幾秒到一分鐘：單一連結讀 `click_hourly`，活動與發送讀 `campaign_hourly` 與 `recipient_hourly`（重算規則見 [資料表與程式介面](data-model.md)〈分析彙總的重算〉）。
+
+**日期依查詢的時區計算**。彙總表以 UTC 的整點為單位存放，「一天」從幾點開始算由查詢決定：
+
+- 統計端點都接受查詢參數 `tz`，值是 IANA 時區名稱（例如 `Asia/Taipei`）；沒有給時用環境變數 `REPORT_TIMEZONE`（預設 `Asia/Taipei`），兩個後端共用。驗證規則寫死，兩個後端不用各自語言的時區函式判斷（Go 的 `time.LoadLocation` 接受 `Local`、PHP 接受 `+08:00` 與 `CST`，結果不一致）：值要符合 `^(UTC|[A-Za-z]+(/[A-Za-z0-9_+-]+)+)$`，而且是 PostgreSQL `pg_timezone_names` 裡的 `name`，否則回 `400`、`invalid_parameter`。契約測試涵蓋 `Local`、`+08:00`、`UTC+8`。
+- `from`、`to` 是那個時區的日期，省略時是那個時區的今天往前 30 天；回應裡的 `day` 也是那個時區的日期。一天涵蓋的 UTC 整點，是「那一天在 tz 的 00:00 換算成 UTC」到「隔天 00:00 換算成 UTC」之間的整點（台北的 10/6 是 UTC 10/5 16:00 到 10/6 16:00）；有夏令時間的時區，切換那一天是 23 或 25 個小時。換算一律在 SQL 裡做，兩個後端用的是同一份 PostgreSQL 時區資料，結果才會相同：範圍寫成 `hour >= ($from::timestamp AT TIME ZONE $tz) AND hour < (($to + 1)::timestamp AT TIME ZONE $tz)`，分組寫成 `(hour AT TIME ZONE $tz)::date`。
+- 回應帶 `timezone` 欄位，寫出這次用的是哪一個時區，前端顯示在報表上。
+- 時間點（例如 `first_click_at`）照共通約定一律是 UTC，由前端換成使用者的當地時間顯示。
+- 時差不是整小時的時區（例如 `Asia/Kolkata`）組不出正確的日期。判斷方式是對範圍內每一天（含 `to` 的隔天）的 00:00 換算成 UTC，分與秒都要是 0；有任何一天不是就回 `400`、`invalid_parameter`。偏移會隨日期改變的時區（例如 `Australia/Lord_Howe`），只檢查現在的偏移會放錯，所以逐日檢查，同樣在 SQL 裡算。
 
 ### `GET /api/stats/links/{code}`
 
-查詢參數 `from`、`to`（日期，例如 `2026-10-01`，含頭含尾，預設最近 30 天）。
+查詢參數 `from`、`to`（`tz` 時區的日期，例如 `2026-10-01`，含頭含尾，預設最近 30 天）、`tz`。
 
 ```json
-{ "code": "aB3xYz", "total": 1520, "daily": [ { "day": "2026-10-01", "clicks": 230 } ] }
+{ "code": "aB3xYz", "timezone": "Asia/Taipei", "total": 1520, "daily": [ { "day": "2026-10-01", "clicks": 230 } ] }
 ```
 
 ### `GET /api/stats/campaigns`
 
-查詢參數 `name`（活動名稱，必填）、`send_id`（選填，只看這一次發送）、`from`、`to`。活動名稱放在查詢參數而不是路徑：名稱是行銷輸入的自由文字，可能有空白與中文，放進路徑要處理編碼，而且同一個名稱可能在不同團隊各出現一次。
+查詢參數 `name`（活動名稱，必填）、`send_id`（選填，只看這一次發送）、`from`、`to`、`tz`。活動名稱放在查詢參數而不是路徑：名稱是行銷輸入的自由文字，可能有空白與中文，放進路徑要處理編碼，而且同一個名稱可能在不同團隊各出現一次。
 
 ```json
 {
   "campaign": "autumn",
+  "timezone": "Asia/Taipei",
   "total":      { "clicks": 8200, "human_clicks": 7400, "unique_clicks": 5300, "conversions": 410, "revenue": "612300.00" },
   "by_channel": [ { "channel": "sms", "clicks": 5100, "human_clicks": 4700, "unique_clicks": 3600, "conversions": 300, "revenue": "450100.00" } ],
   "by_segment": [ { "segment": "vip", "clicks": 1200, "human_clicks": 1150, "unique_clicks": 800, "conversions": 120, "revenue": "240000.00" } ],
@@ -278,18 +287,18 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 }
 ```
 
-- 讀 `campaign_daily`（見 [資料表與程式介面](data-model.md)〈campaign_daily〉）。`human_clicks` 排除依 User-Agent 判斷為預覽或掃描的點擊；`unique_clicks` 在收件人連結上是「有人為點擊的收件人數」，在活動共用的連結上是同一天、同一個 IP 加 User-Agent 算一次的估計值，活動裡有共用連結時 `unique_clicks_estimated` 是 `true`。
-- `conversions` 是歸因期間內（點擊前 5 分鐘到點擊後 7 天，假設）、對得到這個活動點擊的轉換，算在成交的那一天；轉換率由前端以 `conversions / unique_clicks` 計算。
+- 讀 `campaign_hourly`（見 [資料表與程式介面](data-model.md)〈campaign_hourly〉）。`human_clicks` 排除依 User-Agent 判斷為預覽或掃描的點擊；`unique_clicks` 在收件人連結上是「第一次人為點擊落在查詢範圍內的收件人數」（9/30 第一次點、10/2 又點的人，不計入 10 月），在活動共用的連結上是同一小時、同一個 IP 加 User-Agent 算一次的估計值（同一個人在兩個小時各點一次會算兩次，所以偏高；改成以小時為單位之後，和先前以日為單位的數字不能直接比較），活動裡有共用連結時 `unique_clicks_estimated` 是 `true`。
+- `conversions` 是歸因期間內（點擊前 5 分鐘到點擊後 7 天，假設）、對得到這個活動點擊的轉換，算在成交的那個小時所屬的那一天；轉換率由前端以 `conversions / unique_clicks` 計算。
 - `revenue` 用字串表示金額，避免浮點數的誤差。
 - `by_segment` 只含收件人連結；一位收件人屬於多個客群時在每個客群各算一次，所以各客群相加會大於 `total`。
 
 ### `GET /api/stats/campaigns/export`
 
-參數同上，回 `text/csv`，每列是一條連結的點擊數。
+參數同上，回 `text/csv`，每列是一條連結的點擊數；使用的時區寫在下載的檔名裡：`{活動名稱}_{from}_{to}_{時區}.csv`，時區名稱裡的 `/` 換成 `-`（例如 `autumn_2026-10-01_2026-10-31_Asia-Taipei.csv`）。活動名稱可能有中文或空白，`Content-Disposition` 同時給 ASCII 的 `filename`（非 ASCII 字元換成 `_`）與 RFC 5987 編碼的 `filename*=UTF-8''...`，兩個後端照這條規則產生逐字相同的 header，不放進 CSV 本身，匯入試算表時欄位才不會錯位。
 
 ### `GET /api/sends/{id}/recipients/export`
 
-回 `text/csv`（UTF-8、逗號分隔、第一列是欄位名稱），每列是這次發送的一位收件人：`recipient_ref`、`segments`（多個標籤以 `|` 分隔）、`first_click_at`（第一次人為點擊的時間，RFC 3339，沒有時空白）、`human_clicks`、`conversions`、`revenue`。以 `link_recipients` 為主、`LEFT JOIN` `recipient_daily` 加總，沒有點擊也沒有轉換的收件人照樣出現，次數是 `0`。行銷把它匯入 CRM，回答「收到通知的客人有沒有回來」，並據此做下一次分群。已因個資刪除請求清空的收件人不出現在檔案裡。發送不存在或在範圍外回 `404`、`send_not_found`。
+回 `text/csv`（UTF-8、逗號分隔、第一列是欄位名稱），每列是這次發送的一位收件人：`recipient_ref`、`segments`（多個標籤以 `|` 分隔）、`first_click_at`（第一次人為點擊的時間，RFC 3339，沒有時空白）、`human_clicks`、`conversions`、`revenue`。以 `link_recipients` 為主、`LEFT JOIN` `recipient_hourly` 加總，沒有點擊也沒有轉換的收件人照樣出現，次數是 `0`。行銷把它匯入 CRM，回答「收到通知的客人有沒有回來」，並據此做下一次分群。已因個資刪除請求清空的收件人不出現在檔案裡。發送不存在或在範圍外回 `404`、`send_not_found`。
 
 ## 轉換回報
 
