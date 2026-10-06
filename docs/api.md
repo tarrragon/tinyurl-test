@@ -262,7 +262,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 - `from`、`to` 是那個時區的日期，省略時是那個時區的今天往前 30 天；回應裡的 `day` 也是那個時區的日期。一天涵蓋的 UTC 整點，是「那一天在 tz 的 00:00 換算成 UTC」到「隔天 00:00 換算成 UTC」之間的整點（台北的 10/6 是 UTC 10/5 16:00 到 10/6 16:00）；有夏令時間的時區，切換那一天是 23 或 25 個小時。換算一律在 SQL 裡做，兩個後端用的是同一份 PostgreSQL 時區資料，結果才會相同：範圍寫成 `hour >= ($from::timestamp AT TIME ZONE $tz) AND hour < (($to + 1)::timestamp AT TIME ZONE $tz)`，分組寫成 `(hour AT TIME ZONE $tz)::date`。
 - 回應帶 `timezone` 欄位，寫出這次用的是哪一個時區，前端顯示在報表上。
 - 時間點（例如 `first_click_at`）照共通約定一律是 UTC，由前端換成使用者的當地時間顯示。
-- 時差不是整小時的時區（例如 `Asia/Kolkata`）組不出正確的日期。判斷方式是對範圍內每一天（含 `to` 的隔天）的 00:00 換算成 UTC，分與秒都要是 0；有任何一天不是就回 `400`、`invalid_parameter`。偏移會隨日期改變的時區（例如 `Australia/Lord_Howe`），只檢查現在的偏移會放錯，所以逐日檢查，同樣在 SQL 裡算。
+- 時差不是整小時的時區（例如 `Asia/Kolkata`）組不出正確的日期。判斷方式是對範圍內每一天（含 `to` 的隔天）的 00:00 換算成 UTC，分與秒都要是 0；有任何一天不是就回 `400`、`invalid_parameter`，`detail` 寫明原因是時差不是整小時，並累加計數器 `tinyurl_report_tz_rejected_total{reason="non_whole_hour"}`（格式錯誤的時區用 `reason="invalid_name"`），這個計數是改成每 15 分鐘一列的觸發指標之一。偏移會隨日期改變的時區（例如 `Australia/Lord_Howe`），只檢查現在的偏移會放錯，所以逐日檢查，同樣在 SQL 裡算。
 
 ### `GET /api/stats/links/{code}`
 
