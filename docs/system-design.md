@@ -88,7 +88,7 @@ Base62（`0-9a-zA-Z`）每多一個字元，可用的組合乘以 62：
 
 **同一個網址不合併成同一個短碼**：行銷會把同一個商品頁放在簡訊、Email 與廣告裡，各自要分開統計，所以每次建立都產生新的短碼。
 
-**自訂短碼**：與亂數短碼共用同一個唯一索引，有人先佔用就回 `409`。保留字（例如 `api`、`admin`）不開放自訂。
+**自訂短碼**：與亂數短碼共用同一個唯一索引，有人先佔用就回 `409`。長度同樣限 6 到 7 碼，只接受 Base62 字元，所以 `api`、`admin` 這類路徑名稱依長度就被排除，不需要另外的保留字清單。
 
 短碼只用 Base62 字元，所以不會和 `/-/` 底下的維運端點同名，見〈健康檢查〉的〈後端的維運端點放在 `/-/` 底下〉；自訂短碼的驗證同樣只接受 Base62 字元。
 
@@ -161,23 +161,12 @@ erDiagram
 
 ## API
 
-錯誤回應的格式、錯誤碼清單與分頁格式還沒定，在 [開發順序](roadmap.md) 的〈階段一：定案與骨架〉決定，寫進本節。Go 與 Laravel 共用同一個 upstream，同一個錯誤兩邊回的格式必須一樣。
+各服務的路由、端點的 method 與行為、錯誤格式（RFC 9457）、分頁與兩個前端的頁面路由，定在 [API 與路由規格](api.md)。這裡只記影響其他設計的幾個決定：
 
-管理 API 只在 `APP_DOMAIN`，需要 JWT；轉址只在 `SHORT_DOMAIN`，不需要登入。使用者身分從 JWT 的 `sub` 取得，請求內容不帶使用者 ID。
-
-| 方法與路徑                         | 用途                                         | 角色                          |
-| ---------------------------------- | -------------------------------------------- | ----------------------------- |
-| `GET /{code}`（SHORT_DOMAIN）      | 轉址：`302`；不存在回 `404`；到期轉首頁       | 公開                          |
-| `POST /api/auth/login`             | 登入，設定 access 與 refresh token 的 cookie | 公開                          |
-| `POST /api/auth/refresh`           | 換發 access token                            | 已登入                        |
-| `POST /api/auth/logout`            | 登出，刪除 refresh token                     | 已登入                        |
-| `POST /api/links`                  | 建立連結                                     | `marketing` 以上              |
-| `POST /api/links/batch`            | 每個收件人一條的批次建立                     | `marketing_lead` 以上         |
-| `GET /api/links`                   | 列出連結（依角色限制範圍）                   | 已登入                        |
-| `PATCH /api/links/{code}`          | 停用、修改到期時間                           | 建立者、`marketing_lead` 以上 |
-| `GET /api/stats/links/{code}`      | 單一連結的點擊統計                           | 同團隊的行銷、`admin`         |
-| `GET /api/stats/campaigns/{name}`  | 活動統計，依管道拆分                         | 同團隊的行銷、`admin`         |
-| `GET /api/ops/requests`            | 逐筆請求 log                                 | `engineer`、`admin`           |
+- 管理 API 只在 `APP_DOMAIN`，需要登入；轉址只在 `SHORT_DOMAIN`，公開。入口 Nginx 只把 6 到 7 碼 Base62 的單段路徑交給後端轉址，其餘路徑在 Nginx 就回 `404`。
+- 網址不帶版本號：消費者只有自己的兩個前端，跟後端一起部署。
+- 連結以短碼識別，沒有 `DELETE`，只能停用；`original_url` 建立後不能修改。
+- 會被客戶端拿回來再送出的值（分頁游標、時間格式）格式寫死，因為同一個使用者的連續請求可能先後落在 Go 與 Laravel。
 
 ## 讀取路徑：快取與不存在的短碼
 
@@ -259,7 +248,7 @@ Docker 對 unhealthy 的容器不會重啟，只有程序結束才會依 `restar
 | 轉址         | 偏可用性：PostgreSQL 掛掉時，快取裡有的短碼照常轉址                  |
 | 建立連結     | 偏一致性：短碼唯一由資料庫保證，PostgreSQL 掛掉就無法建立            |
 | 點擊統計     | 最終一致：經由 stream 非同步寫入                                     |
-| 登入驗證     | JWT 驗簽不依賴資料庫；撤銷清單在 Valkey，Valkey 掛掉時撤銷暫時失效   |
+| 登入驗證     | JWT 驗簽不依賴資料庫；使用者層級的撤銷紀錄在 Valkey，Valkey 掛掉時照常放行、立即撤銷暫時失效（最多 15 分鐘後 access token 自然過期） |
 
 ## 擴展的方向
 

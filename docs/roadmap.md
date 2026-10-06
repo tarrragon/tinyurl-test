@@ -12,7 +12,7 @@
 
 **目標**：把之後改了會牽動多方的決定定下來，讓本機環境起得來。
 
-- 補完 [系統設計](system-design.md) 的 API 規格：錯誤回應的格式（例如採用 RFC 9457 Problem Details）與錯誤碼清單、分頁格式、`X-Backend` 回應 header。Go 與 Laravel 共用同一個 upstream，同一個錯誤兩邊回的格式必須一樣。
+- API 規格：路由、端點、錯誤格式（RFC 9457）與錯誤碼清單、分頁格式、`X-Backend` 回應 header，已寫在 [API 與路由規格](api.md)。Go 與 Laravel 共用同一個 upstream，同一個錯誤兩邊回的格式必須一樣。
 - 決定 schema 由哪一邊的 migration 工具管理（見 [services/laravel](../services/laravel/README.md)），寫出第一版 migration。
 - 定 metrics 的名稱與標籤（請求數、延遲、錯誤、快取命中），兩個後端之後照同一份名稱輸出，才能並排比較。
 - 建立契約測試的位置與工具：一組與語言無關、對 HTTP API 發請求並檢查回應的測試，兩個後端都要通過。
@@ -38,7 +38,7 @@
 
 **目標**：在加任何優化之前，先量出最簡單做法的能力，並建立之後每個階段都會用到的量測工具。
 
-- 新增 `infra/observability/`：指標收集（例如 Prometheus）與面板（例如 Grafana）加入 compose，Gatus 開啟 `metrics` 讓 Prometheus 收集探測結果；Go 版提供 `/-/metrics`（放在 `/-/` 下的理由見 [系統設計](system-design.md)〈健康檢查〉），輸出結構化 log。
+- 新增 `infra/observability/`：指標收集（例如 Prometheus）與面板（例如 Grafana）加入 compose，Gatus 開啟 `metrics` 讓 Prometheus 收集探測結果；Nginx access log 與後端的結構化 log 照 [API 與路由規格](api.md)〈請求 log〉的欄位送進 log 系統，工程師在 Grafana 查逐筆請求；Go 版提供 `/-/metrics`（放在 `/-/` 下的理由見 [系統設計](system-design.md)〈健康檢查〉），輸出結構化 log。
 - 照 [loadtest](../loadtest/README.md) 寫出轉址基準與短碼掃描兩個情境的腳本，以及產生測試資料的腳本。
 - 跑第一次壓測，記錄可承受的流量、先到極限的那一層、PostgreSQL 的連線數與查詢延遲、點擊數比對。
 
@@ -49,7 +49,7 @@
 
 **目標**：讓行銷團隊能登入並建立連結。
 
-- Go 版實作 JWT 登入、refresh token、撤銷清單與角色檢查（見 [登入與權限](auth-and-roles.md)）。
+- Go 版實作 JWT 登入、refresh token、以使用者為單位的立即撤銷與角色檢查（見 [登入與權限](auth-and-roles.md)）。
 - `web/portal` 用 Vue 3 + Vite 建出前台：登入、建立連結、列出自己的連結。
 - 契約測試補上登入與權限的部分。
 

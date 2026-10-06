@@ -55,7 +55,7 @@
 | [infra/cache/](infra/cache/README.md)      | 快取伺服器 Valkey，以及選型時的比較                     |
 | [infra/postgres/](infra/postgres/README.md) | 主資料庫 PostgreSQL、初始化腳本                        |
 | [loadtest/](loadtest/README.md)            | 壓測情境、測試資料與結果紀錄                            |
-| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型、API）、[開發順序](docs/roadmap.md)、[CI 設計](docs/ci.md)、[服務監看](infra/monitoring/README.md)、[登入與權限](docs/auth-and-roles.md) |
+| [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型）、[API 與路由規格](docs/api.md)、[開發順序](docs/roadmap.md)、[CI 設計](docs/ci.md)、[服務監看](infra/monitoring/README.md)、[登入與權限](docs/auth-and-roles.md) |
 
 ## Docker
 
@@ -68,5 +68,5 @@ docker compose up -d postgres cache   # 目前只有這兩個起得來
 
 ## 待決定
 
-- API 錯誤格式、錯誤碼與分頁格式、metrics 名稱、契約測試工具：在 [開發順序](docs/roadmap.md) 的〈階段一：定案與骨架〉決定。
+- metrics 名稱、契約測試工具：在 [開發順序](docs/roadmap.md) 的〈階段一：定案與骨架〉決定。API 的路由、錯誤格式與分頁已定在 [API 與路由規格](docs/api.md)。
 - 壓測工具，見 [loadtest/README.md](loadtest/README.md)。
