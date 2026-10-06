@@ -26,7 +26,7 @@
 下面這些檔案被多個元件依賴，改了它們卻只跑單一元件的 job，會讓壞掉的組合通過 CI。所以它們列在「全部重跑」的觸發清單裡：
 
 - 契約測試的目錄（位置在階段一決定）
-- migration 的目錄：兩個後端讀同一份 schema，不論 migration 由哪一邊的工具管理
+- 兩個後端的 migration 目錄（`services/laravel/database/migrations/`、`services/go/migrations/`）：兩個後端讀同一份 schema，改了任一套都要重跑 schema 比對與兩個後端的整合測試
 - `docker-compose.yml`、`.env.example`
 - `docs/` 底下的 API 規格（錯誤格式、錯誤碼、分頁格式）
 - `.github/workflows/**`：workflow 本身改了，要確認每個 job 都還跑得起來
@@ -44,6 +44,10 @@
 | 階段一 | 會跑、不擋合併：此時還沒有任何實作，契約測試全部失敗是預期的 |
 | 階段二起 | Go 的契約測試擋合併 |
 | 階段五起 | Laravel 的契約測試也擋合併 |
+
+## 兩套 migration 的 schema 比對
+
+Go 與 Laravel 各有一套 migration，同一個資料庫只由其中一套執行（理由見 [infra/postgres](../infra/postgres/README.md)〈誰管 schema〉），所以 CI 要確認兩套建出相同的 schema。這個 job 開兩個空的 PostgreSQL，一個跑 Laravel 的 migration、一個跑 Atlas 的 migration，再用 `pg_dump --schema-only` 或 `atlas schema diff` 比對兩邊，排除兩套工具的紀錄表與只有 Laravel 框架用的表。任一套 migration 改了就跑，從階段一起擋合併：此時兩套都已經寫出第一版，不一致就是其中一套寫錯了。
 
 ## 不放進 CI 的項目
 
