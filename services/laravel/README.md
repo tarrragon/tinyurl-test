@@ -7,7 +7,7 @@ Laravel 版的短網址 API。與 [services/go](../go/README.md) 實作同一份
 兩個後端共用資料，所以下面幾件事要先約定好，不能各自用框架預設值：
 
 - **資料庫 schema**：兩邊各維護一套完整的 migration，同一個資料庫只由根目錄 `.env` 的 `SCHEMA_OWNER` 指定的那一套執行，CI 比對兩套建出的 schema。業務的 `users` 表由兩套 migration 自己定義，Laravel 預設的 `create_users_table` 要刪掉。細節見 [infra/postgres](../../infra/postgres/README.md)〈誰管 schema〉。
-- **快取的 key 格式與序列化**：Laravel 的 cache 預設會加前綴並用 PHP 序列化，Go 讀不懂；共用的 key 要用 JSON 與固定前綴。
+- **快取的 key 格式與序列化**：Laravel 的 cache 預設會加前綴並用 PHP 序列化，Go 讀不懂。共用的 key 不經過 Laravel 的 cache，直接用 Redis 連線讀寫 JSON，格式見 [docs/data-model.md](../../docs/data-model.md)〈共用的快取與 stream 格式〉。Laravel 的 Redis 連線本身也會替每個 key 加前綴（`config/database.php` 的 `REDIS_PREFIX`，預設由 `APP_NAME` 組出），要設成空字串，否則 Go 寫的 `link:{code}` 在 Laravel 這邊查不到。
 - **登入憑證**：見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)。
 - **壓測條件**：與 Go 版比較時用同一套情境與同樣的容器資源上限，見 [loadtest](../../loadtest/README.md)；PHP-FPM 的 worker 數會直接限制同時處理的請求數，要記錄在每次結果裡。Laravel 的容器裡另外跑著一個 Nginx，它用的 CPU 與記憶體也算在同一個資源上限裡，Go 的容器沒有這一層，比較數字時要把這個差異寫進結果。
 - **短碼產生規則**：兩邊都用密碼學安全的亂數產生 Base62 短碼（一般 6 碼、每個收件人一條的連結 7 碼），寫入時靠 PostgreSQL 的唯一索引擋重複，重複就重試；選擇理由見 [docs/system-design.md](../../docs/system-design.md) 的〈短碼設計〉。

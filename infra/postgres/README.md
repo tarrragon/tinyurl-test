@@ -4,11 +4,11 @@
 
 ## 預定的資料
 
-完整的資料模型（ER 圖、主鍵、為什麼點擊數不放在計數欄位）見 [docs/system-design.md](../../docs/system-design.md) 的〈資料模型〉。摘要：
+資料模型的 ER 圖與設計理由見 [docs/system-design.md](../../docs/system-design.md) 的〈資料模型〉，每張表的 SQL（欄位型別、約束與索引的名稱）見 [docs/data-model.md](../../docs/data-model.md)。摘要：
 
 - `teams`、`users`、`refresh_tokens`：登入與權限，角色放在 `users.role`。
 - `links`：短碼（唯一索引，兩個後端產生的短碼靠它判斷重複）、原始網址、管道、活動、建立者、到期與停用時間。
-- `click_events`：每一次轉址一筆，依時間做 [partition](https://www.postgresql.org/docs/current/ddl-partitioning.html)，超過保留期的分割區整個刪除。
+- `click_events`：每一次轉址一筆。第一版不分割，階段七的實驗改成依時間做 [partition](https://www.postgresql.org/docs/current/ddl-partitioning.html)，超過保留期的分割區整個刪除。
 - `click_daily`：每日彙總，後台報表讀這張。
 
 ## 誰管 schema

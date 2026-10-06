@@ -13,7 +13,7 @@
 **目標**：把之後改了會牽動多方的決定定下來，讓本機環境起得來。
 
 - API 規格：路由、端點、錯誤格式（RFC 9457）與錯誤碼清單、分頁格式、`X-Backend` 回應 header，已寫在 [API 與路由規格](api.md)。Go 與 Laravel 共用同一個 upstream，同一個錯誤兩邊回的格式必須一樣。
-- 兩個後端各寫第一版 migration（Laravel 用自己的 migration，Go 用 Atlas），同一個資料庫由 `SCHEMA_OWNER` 指定的那一套執行；刪掉 Laravel 預設的 `create_users_table`。做法見 [infra/postgres](../infra/postgres/README.md)〈誰管 schema〉。
+- 資料表、共用的快取 key 與程式介面已定在 [資料表與程式介面](data-model.md)。兩個後端照它各寫第一版 migration（Laravel 用自己的 migration，Go 用 Atlas），同一個資料庫由 `SCHEMA_OWNER` 指定的那一套執行；刪掉 Laravel 預設的 `create_users_table`。做法見 [infra/postgres](../infra/postgres/README.md)〈誰管 schema〉。
 - 定 metrics 的名稱與標籤（請求數、延遲、錯誤、快取命中），兩個後端之後照同一份名稱輸出，才能並排比較。
 - 建立契約測試的位置與工具：一組與語言無關、對 HTTP API 發請求並檢查回應的測試，兩個後端都要通過。
 - `docker compose up` 起得來 PostgreSQL、Valkey、Nginx。

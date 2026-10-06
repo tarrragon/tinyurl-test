@@ -111,7 +111,8 @@ erDiagram
 
     teams {
         bigint id PK
-        text name
+        text name UK
+        timestamptz created_at
     }
     users {
         bigint id PK
@@ -119,6 +120,7 @@ erDiagram
         text password_hash
         text role
         bigint team_id FK
+        timestamptz created_at
         timestamptz disabled_at
     }
     links {
@@ -135,8 +137,8 @@ erDiagram
     }
     click_events {
         bigint id PK
-        timestamptz clicked_at PK
         bigint link_id FK
+        timestamptz clicked_at
         inet ip
         text user_agent
         text referer
@@ -150,12 +152,14 @@ erDiagram
     refresh_tokens {
         bigint id PK
         bigint user_id FK
-        text token_hash UK
+        bytea token_hash UK
+        timestamptz created_at
         timestamptz expires_at
     }
 ```
 
-- **`click_events` 依 `clicked_at` 分割（partition）**，每月一個分割區；PostgreSQL 要求分割表的主鍵包含分割欄位，所以主鍵是 `(id, clicked_at)`。超過保留期的分割區整個刪除，比逐筆刪除快得多。
+- 每個欄位的型別、約束、索引名稱，以及 Go 與 Laravel 怎麼對應這些資料表，定在 [資料表與程式介面](data-model.md)。
+- **`click_events` 之後依 `clicked_at` 分割（partition）**，每月一個分割區；PostgreSQL 要求分割表的主鍵包含分割欄位，所以主鍵會改成 `(id, clicked_at)`。超過保留期的分割區整個刪除，比逐筆刪除快得多。第一版不分割，分割是[開發順序](roadmap.md)〈階段七：優化實驗〉的一個實驗，上圖是第一版的欄位。
 - **點擊數不放在 `links` 的計數欄位**：爆紅連結每秒數百次更新同一列，會在那一列上排隊等鎖。點擊先記成事件，再彙總到 `click_daily`。
 - **角色只放在 `users.role`**：四個角色是固定的，不需要另一張表；角色變多或要細分權限時再拆。
 

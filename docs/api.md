@@ -173,11 +173,12 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 | --- | --- | --- |
 | `original_url` 不是 `http` 或 `https` 的絕對網址 | `422` | `invalid_url` |
 | `code` 不是 6 到 7 碼的 Base62 | `422` | `invalid_code` |
-
-自訂短碼不需要保留字清單：長度限制已經排除 `api`、`admin` 這類短字，而後端的固定路由都放在 `/-/` 底下，不會和任何 Base62 短碼同名（見 [系統設計](system-design.md)〈健康檢查〉）。
 | `code` 已被使用 | `409` | `code_taken`（放在 `errors` 裡，頂層 `code` 是 `conflict`） |
 | `expires_at` 早於現在 | `422` | `invalid_expiry` |
 | `channel` 不在允許的值裡 | `422` | `invalid_channel` |
+| `campaign` 是空字串或超過 100 字元 | `422` | `invalid_campaign` |
+
+`original_url` 上限 2,048 字元，超過也回 `invalid_url`。自訂短碼不需要保留字清單：長度限制已經排除 `api`、`admin` 這類短字，而後端的固定路由都放在 `/-/` 底下，不會和任何 Base62 短碼同名（見 [系統設計](system-design.md)〈健康檢查〉）。各欄位的長度與允許值也寫成資料庫的約束，見 [資料表與程式介面](data-model.md)〈links〉。
 
 一個請求可能同時有多個欄位錯誤，`422` 的回應在 `errors` 裡逐欄列出，見〈錯誤格式〉。
 
@@ -265,9 +266,9 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 ### 使用者與團隊
 
 - `GET /api/users`：列出使用者，支援分頁與 `team_id`、`role` 篩選。
-- `POST /api/users`：`{ "email", "role", "team_id", "password" }`，成功 `201`；email 已存在回 `409`，`errors` 裡是 `email_taken`。
-- `PATCH /api/users/{id}`：接受 `role`、`team_id`、`disabled`。停用或改角色時，刪除該使用者的 refresh token，並讓他手上還沒過期的 access token 立刻失效，做法見 [登入與權限](auth-and-roles.md)〈效期與撤銷〉。
-- `GET /api/teams`、`POST /api/teams`：`{ "name" }`。
+- `POST /api/users`：`{ "email", "role", "team_id", "password" }`，成功 `201`；email 已存在回 `409`，`errors` 裡是 `email_taken`。email 比對不分大小寫，後端轉成小寫再存。欄位錯誤回 `422`：email 格式錯誤是 `invalid_email`，密碼不是 8 到 72 bytes 是 `invalid_password`（理由見 [登入與權限](auth-and-roles.md)〈密碼〉），角色不在四個角色裡是 `invalid_role`，`team_id` 不存在、或行銷的兩個角色沒給團隊是 `invalid_team`。
+- `PATCH /api/users/{id}`：接受 `role`、`team_id`、`disabled`，欄位錯誤的錯誤碼同 `POST /api/users`。停用或改角色時，刪除該使用者的 refresh token，並讓他手上還沒過期的 access token 立刻失效，做法見 [登入與權限](auth-and-roles.md)〈效期與撤銷〉。
+- `GET /api/teams`、`POST /api/teams`：`{ "name" }`，名稱 1 到 100 字元，不合規則回 `422`、`invalid_team_name`；名稱已存在回 `409`，`errors` 裡是 `team_name_taken`。
 
 ## 狀態碼
 
@@ -281,7 +282,7 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 | `401` | 沒登入、token 過期或無效 |
 | `403` | 已登入，但角色沒有這個操作的權限 |
 | `404` | 資源不存在，或在使用者的範圍外 |
-| `409` | 與既有資料衝突（短碼、email 已被使用） |
+| `409` | 與既有資料衝突（短碼、email、團隊名稱已被使用） |
 | `415` | 有 body 但不是 `application/json` |
 | `422` | JSON 格式正確，但欄位值不合規則 |
 | `429` | 超過限流 |
@@ -327,8 +328,8 @@ log 的欄位現在先定下來，因為壓測與比對兩個後端都要用：
 | `unsupported_media_type` | `415` | 不是 `application/json` |
 | `validation_failed` | `422` | 欄位驗證失敗，細節在 `errors` |
 | `conflict` | `409` | 欄位值和既有資料衝突，細節在 `errors` |
-| `invalid_url`、`invalid_code`、`invalid_expiry`、`invalid_channel`、`field_not_editable`、`batch_too_large` | `422`（放在 `errors` 裡） | 各欄位的驗證錯誤 |
-| `code_taken`、`email_taken` | `409`（放在 `errors` 裡） | 短碼、email 已被使用 |
+| `invalid_url`、`invalid_code`、`invalid_expiry`、`invalid_channel`、`invalid_campaign`、`field_not_editable`、`batch_too_large`、`invalid_email`、`invalid_password`、`invalid_role`、`invalid_team`、`invalid_team_name` | `422`（放在 `errors` 裡） | 各欄位的驗證錯誤 |
+| `code_taken`、`email_taken`、`team_name_taken` | `409`（放在 `errors` 裡） | 短碼、email、團隊名稱已被使用 |
 | `too_many_attempts`、`rate_limited` | `429` | 登入嘗試過多、一般限流 |
 | `internal_error` | `500` | 未預期的錯誤 |
 | `dependency_unavailable` | `503` | 資料庫或快取不可用 |

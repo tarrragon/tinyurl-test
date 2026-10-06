@@ -40,7 +40,7 @@ Go 與 Laravel 在同一個 upstream 輪流接請求，同一個使用者的連�
 JWT 簽出去之後，在到期前驗證都會通過，所以撤銷靠以下三件事：
 
 - **access token 短效期**：15 分鐘。
-- **refresh token 存在 PostgreSQL**：存雜湊值，效期較長（例如 7 天），用來換新的 access token。登出或停用帳號時刪除它，最晚在 access token 到期後失去存取權。
+- **refresh token 存在 PostgreSQL**：存雜湊值，效期較長（例如 7 天），用來換新的 access token。登出或停用帳號時刪除它，最晚在 access token 到期後失去存取權。token 本身是 32 bytes 的密碼學安全亂數，以不補 `=` 的 base64url 編碼放進 cookie；資料庫存的是 cookie 字串的 SHA-256（32 bytes 原始值，欄位見 [資料表與程式介面](data-model.md)〈refresh_tokens〉）。用 SHA-256 而不是密碼用的 bcrypt：token 有 256 bits 的亂數，無法暴力猜出，而換發時要依雜湊值查詢，加鹽的 bcrypt 每次結果不同、查不到。
 - **立即撤銷（停用帳號、改角色）**：以使用者為單位。在 Valkey 寫入 `revoked_user:{使用者 ID}`，值是撤銷當下的 Unix 時間（秒），TTL 15 分鐘；兩個後端驗簽之後讀這個 key，token 的 `iat` 小於或等於這個值就拒絕。同時刪除這個使用者的 refresh token。
 
 以使用者為單位而不是以 token 為單位，是因為停用帳號時系統不知道這個人手上有哪些 access token 還沒過期，拿不到它們各自的識別碼。TTL 只需要 15 分鐘：15 分鐘後舊的 access token 都已過期，而 refresh token 已經刪除，換發不了新的。
@@ -48,6 +48,11 @@ JWT 簽出去之後，在到期前驗證都會通過，所以撤銷靠以下三�
 `iat` 與撤銷時間都以秒為單位，同一秒內簽發的 token 也會被拒絕（使用者重新登入一次即可），這是為了不讓同一秒內「先簽發、後撤銷」的 token 漏過。key 的名稱、值的格式與比對方式是兩個後端共用的契約，兩邊要逐字一致。
 
 角色變更也走同一個機制，所以立即生效；使用者重新登入或換發 token 時，拿到的是新角色。
+
+### 密碼
+
+- 兩個後端都用 bcrypt、cost 12。PHP 的 `password_hash` 產生 `$2y$` 開頭的雜湊值，Go 的 `golang.org/x/crypto/bcrypt` 產生 `$2a$` 開頭的；兩種前綴在兩個函式庫都驗得過，所以同一個帳號由哪個後端建立，都能在另一個後端登入。契約測試要涵蓋這一點：一邊建立使用者、另一邊登入。
+- 密碼長度 8 到 72 bytes（UTF-8 編碼後計算），不合規則回 `422`、`invalid_password`。上限來自 bcrypt：它只用前 72 bytes，Go 的函式庫對更長的密碼回錯誤，PHP 則直接截斷。在兩邊都先擋下，兩個後端對同一個密碼的結果才一致。
 
 ### 存放位置
 
