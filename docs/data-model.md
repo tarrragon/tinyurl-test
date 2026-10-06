@@ -240,7 +240,7 @@ type ClickRecorder interface {
 
 ### 短碼重複的判斷
 
-`LinkStore` 的建立遇到唯一約束衝突時，依被違反的約束名稱判斷：名稱是 `links_code_key` 就回「短碼已被使用」的錯誤，其他約束照一般的資料庫錯誤處理。Go 從 pgx 錯誤的 `ConstraintName` 取得名稱，Laravel 從 `QueryException` 的 SQLSTATE `23505` 與錯誤訊息裡的約束名稱取得；這是約束名稱要在 SQL 裡寫明的另一個理由。
+`LinkStore` 的建立遇到唯一約束衝突時，依被違反的約束名稱判斷：名稱是 `links_code_key` 就回「短碼已被使用」的錯誤，其他約束照一般的資料庫錯誤處理。Go 從 GORM 錯誤裡包著的 pgx 錯誤取得 `ConstraintName`（見〈Go 的資料存取〉），Laravel 從 `QueryException` 的 SQLSTATE `23505` 與錯誤訊息裡的約束名稱取得；這是約束名稱要在 SQL 裡寫明的另一個理由。
 
 拿到「短碼已被使用」之後：
 
@@ -250,7 +250,11 @@ type ClickRecorder interface {
 
 ## Go 的資料存取
 
-- 用 `pgx/v5` 連 PostgreSQL，SQL 手寫在各個 store 的實作裡，不用 ORM。查詢數量不多，而階段七的每個實驗都要看得到實際執行的 SQL 才能解釋壓測的數字。
+- **用 GORM**（`gorm.io/gorm` 加 `gorm.io/driver/postgres`，底層的驅動是 pgx），和 Laravel 用 Eloquent 對稱：兩個後端都照各自生態系常見的做法寫。這個專案的原則是開發方式照業界慣例，量測是另一個需求，量的就是照慣例寫出來的系統；不為了讓量測乾淨而先改變開發方式。
+- **不用 GORM 的 `AutoMigrate`**：schema 由 Atlas 的版本化 migration 管理（見 [infra/postgres](../infra/postgres/README.md)〈誰管 schema〉），model 的 struct tag 只描述欄位與資料表的對應。
+- **GORM 在程式碼沒寫出來的地方多做的事**，量測時要知道它們存在：寫入（create、update、delete）預設包在一個交易裡，每次多出 `BEGIN` 與 `COMMIT` 兩次來回；`First` 會在查詢後加上依主鍵排序，依唯一欄位查一筆時用 `Take`。開發時照預設寫；壓測顯示它們是瓶頸時，關掉預設交易（`SkipDefaultTransaction`）或把熱路徑改寫成原始 SQL，就是[開發順序](roadmap.md)〈階段七：優化實驗〉的一個實驗，前後各量一次。
+- **短碼重複**：GORM 回傳的錯誤裡包著 pgx 的 `*pgconn.PgError`，用 `errors.As` 取出後讀 `ConstraintName`。GORM 的 `TranslateError` 會把它換成 `gorm.ErrDuplicatedKey`，換完就沒有約束名稱，分不出是短碼還是別的唯一約束，所以不開。
+- **批次建立**的 `ON CONFLICT (code) DO NOTHING RETURNING code` 用 GORM 的 `clause.OnConflict{DoNothing: true}` 加 `clause.Returning` 寫出。
 - 套件依職責切：`internal/redirect`（轉址的 handler 與上面的介面）、`internal/link`、`internal/auth`、`internal/stats`，PostgreSQL 與 Valkey 的實作放在 `internal/store/postgres`、`internal/store/valkey`。
 - 每張表一個 struct，可以是空值的欄位用指標（`*int64`、`*time.Time`），例如 `Link.TeamID`、`Link.DisabledAt`。
 
