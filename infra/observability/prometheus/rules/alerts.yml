@@ -29,10 +29,11 @@ groups:
 
   - name: latency
     rules:
-      # 後端還沒輸出延遲分布（histogram）之前，延遲的告警用探測回應時間在 15 分鐘內的 p95：
-      # 單次探測雜訊大，取時間窗的分位數之後才可用；探測程式自己在過載主機上的等待也算在裡面
+      # 後端還沒輸出延遲分布（histogram）之前，延遲的告警用探測：15 分鐘內回應超過 0.5 秒的探測佔兩成以上。
+      # 探測每 30 秒一次，15 分鐘只有 30 次，分位數在這個樣本數下近於取最慢的幾次，所以看慢探測的比例；
+      # 子查詢的步長 30s 對齊探測間隔，讀取間隔要不長於探測間隔。探測程式自己在過載主機上的等待也算在裡面
       - alert: ProbeSlow
-        expr: quantile_over_time(0.95, gatus_results_duration_seconds{group="後端"}[15m]) > 0.5
+        expr: avg_over_time((gatus_results_duration_seconds{group="後端"} > bool 0.5)[15m:30s]) > 0.2
         for: 10m
         labels:
           severity: warning
@@ -76,19 +77,22 @@ groups:
 
   - name: host
     rules:
-      # 主機（macOS 上是 Docker 的虛擬機）的 load 超過核心數的 1.5 倍，或 steal 佔了一成以上的 CPU 時間。
-      # Linux 的 load 含等磁碟讀寫的行程，磁碟爭用也會讓它成立。
+      # 主機（macOS 上是 Docker 的虛擬機）5 分鐘平均的 load 超過核心數的 1.5 倍，或 steal 佔了一成以上的 CPU 時間。
+      # load1 是間歇跳動的原始值，直接加 for 會被打斷（實測 12 小時最長連續 2 分鐘），所以先取 5 分鐘平均。
+      # 1.5 與 0.1 是起始值，以主機平常的基準校正。Linux 的 load 含等磁碟讀寫的行程，磁碟爭用也會讓它成立。
+      # keep_firing_for：症狀規則帶 15 分鐘的時間窗，主機恢復後還會成立一陣子，原因要多撐這麼久，抑制才不會先解除。
       # 虛擬機外面的競爭（Mac 上的其他程式）兩者都反映不到，見 README〈在 macOS 上跑時看不到 Mac 本身〉
       - alert: HostCpuSaturated
         expr: |
-          node_load1 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1.5
+          avg_over_time(node_load1[5m]) / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1.5
           or avg without (cpu, mode) (rate(node_cpu_seconds_total{mode="steal"}[5m])) > 0.1
         for: 5m
+        keep_firing_for: 15m
         labels:
           severity: warning
           scope: host
         annotations:
-          summary: "主機的 load 是核心數的 {{ $value | humanize }} 倍"
+          summary: "主機飽和：load 除以核心數或 steal 的比例超過門檻（{{ $value | humanize }}）"
 
       # 同一顆磁碟常掛在好幾個掛載點，依裝置分組，一顆磁碟只發一則。
       # OrbStack 上 device="mac"（virtiofs）是 Mac 本機的磁碟，/dev/vdb1 是虛擬機放 Docker 資料的那一顆，
