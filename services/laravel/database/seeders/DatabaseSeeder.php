@@ -2,24 +2,21 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
+// 開發與驗證用的資料：照 docs/data-model.md 的規則產生，資料庫的約束擋下任何不合規格的列。
+// 亂數種子固定，每次產生的資料相同；量由環境變數調整（見 SendSeeder）。
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // User::factory(10)->create();
+        mt_srand(20261012);
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        $this->call([
+            TeamUserSeeder::class,
+            LinkSeeder::class,
+            SendSeeder::class,
+            ClickSeeder::class,
         ]);
     }
 }

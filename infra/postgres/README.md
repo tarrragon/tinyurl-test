@@ -26,7 +26,7 @@ compose 環境用根目錄 `.env` 的 `SCHEMA_OWNER`（`laravel` 或 `go`）指�
 
 ### 兩套建出的 schema 由 CI 比對
 
-兩套 migration 是分開寫的兩份 schema 定義。CI 開兩個空資料庫，各跑一套，再比對兩邊的 schema（`pg_dump --schema-only` 或 `atlas schema diff`）；比對結果不一致，代表其中一套寫錯了。這跟契約測試讓兩個後端互相驗證 API 是同一個做法。比對時排除兩類表：兩套工具各自的紀錄表，以及只有 Laravel 框架自己用的表（見下一節）。
+兩套 migration 是分開寫的兩份 schema 定義。CI 開兩個空資料庫，各跑一套，再比對兩邊的 schema（`pg_dump --schema-only` 或 `atlas schema diff`）；比對結果不一致，代表其中一套寫錯了。這跟契約測試讓兩個後端互相驗證 API 是同一個做法。比對時排除兩類表：兩套工具各自的紀錄表，以及只有 Laravel 框架自己用的表（見下一節）。用 `pg_dump` 比對時，表與它的 sequence 要分別排除：`-T migrations` 不會連帶排除 `migrations_id_seq`，Laravel 這一側要排除的是 `migrations`、`migrations_id_seq`、`cache`、`cache_locks`、`jobs`、`jobs_id_seq`、`job_batches`、`failed_jobs`、`failed_jobs_id_seq`。兩套之外再加一個基準：把 [docs/data-model.md](../../docs/data-model.md) 的 SQL 區塊依序執行建出的規格 schema，兩套各自和它比對，兩套同樣寫錯時也抓得到。
 
 ### 業務表由這兩套 migration 自己定義
 
