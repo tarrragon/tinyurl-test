@@ -1,0 +1,9 @@
+# 面板定義放在 infra/observability/grafana/dashboards/，以檔案為準；在介面上改的不會寫回檔案
+apiVersion: 1
+providers:
+  - name: tinyurl
+    folder: tinyurl
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

@@ -6,6 +6,9 @@
 ui:
   title: tinyurl 服務狀態
 
+# 在 /metrics 輸出探測結果，Prometheus 讀它（infra/observability/prometheus/prometheus.yml 的 gatus job）
+metrics: true
+
 endpoints:
   # 經過入口 Nginx：確認入口本身與路由是通的。
   # 兩個後端放進同一個 upstream 之後，這一條不保證打到哪一個，所以兩個後端另外各自直接檢查。

@@ -1,0 +1,37 @@
+# Prometheus 的讀取清單：每 15 秒到各個 exporter 讀一次。各層看得到與看不到的範圍見 infra/observability/README.md。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # 每個容器的 CPU、記憶體、網路與磁碟讀寫（讀 cgroup）
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # 主機的 CPU、記憶體、load 與磁碟；在 macOS 的 Docker 上看到的是 Docker 的虛擬機，不是 Mac
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: valkey
+    static_configs:
+      - targets: ["valkey-exporter:9121"]
+
+  # 入口 Nginx 的連線數與累計請求數（讀 stub_status）
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  # Gatus 的外部探測結果
+  - job_name: gatus
+    static_configs:
+      - targets: ["gatus:8080"]
