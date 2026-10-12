@@ -17,7 +17,7 @@ Go 版的短網址 API。與 [services/laravel](../laravel/README.md) 實作同�
 services/go/
 ├── cmd/server/      # main 套件，Dockerfile 建置這裡
 ├── internal/        # 業務邏輯，外部套件無法 import
-├── migrations/      # Atlas 的 migration 檔，見 infra/postgres〈誰管 schema〉
+├── migrations/      # Atlas 的 migration 檔與 atlas.sum，由規格產生，見 infra/postgres〈Go 那一套怎麼產生與更新〉
 ├── go.mod
 └── Dockerfile
 ```

@@ -26,7 +26,7 @@ compose 環境用根目錄 `.env` 的 `SCHEMA_OWNER`（`laravel` 或 `go`）指�
 
 ### 兩套建出的 schema 由 CI 比對
 
-兩套 migration 是分開寫的兩份 schema 定義。CI 開兩個空資料庫，各跑一套，再比對兩邊的 schema（`pg_dump --schema-only` 或 `atlas schema diff`）；比對結果不一致，代表其中一套寫錯了。這跟契約測試讓兩個後端互相驗證 API 是同一個做法。比對時排除兩類表：兩套工具各自的紀錄表，以及只有 Laravel 框架自己用的表（見下一節）。用 `pg_dump` 比對時，表與它的 sequence 要分別排除：`-T migrations` 不會連帶排除 `migrations_id_seq`，Laravel 這一側要排除的是 `migrations`、`migrations_id_seq`、`cache`、`cache_locks`、`jobs`、`jobs_id_seq`、`job_batches`、`failed_jobs`、`failed_jobs_id_seq`。兩套之外再加一個基準：把 [docs/data-model.md](../../docs/data-model.md) 的 SQL 區塊依序執行建出的規格 schema，兩套各自和它比對，兩套同樣寫錯時也抓得到。
+兩套 migration 是分開寫的兩份 schema 定義。CI 開兩個空資料庫，各跑一套，再比對兩邊的 schema（`pg_dump --schema-only` 或 `atlas schema diff`）；比對結果不一致，代表其中一套寫錯了。這跟契約測試讓兩個後端互相驗證 API 是同一個做法。比對時排除兩類表：兩套工具各自的紀錄表，以及只有 Laravel 框架自己用的表（見下一節）。用 `pg_dump` 比對時，表與它的 sequence 要分別排除：`-T migrations` 不會連帶排除 `migrations_id_seq`，Laravel 這一側要排除的是 `migrations`、`migrations_id_seq`、`cache`、`cache_locks`、`jobs`、`jobs_id_seq`、`job_batches`、`failed_jobs`、`failed_jobs_id_seq`。Go 這一側要排除的是 `atlas_schema_revisions`。兩套之外再加一個基準：`scripts/spec-schema.sh` 取出 [docs/data-model.md](../../docs/data-model.md) 的 SQL 區塊依序執行，建出規格的 schema，兩套各自和它比對，兩套同樣寫錯時也抓得到。
 
 ### 業務表由這兩套 migration 自己定義
 
@@ -36,6 +36,23 @@ Laravel 建立專案時附帶三個預設 migration，寫第一版 migration 時
 
 - `create_users_table`：刪掉。它建的 `users` 與業務的 `users` 同名，留著兩套就建不出相同的 schema；同一個檔案裡的 `password_reset_tokens` 與 `sessions` 也用不到，因為 API 用 JWT 登入（見 [docs/auth-and-roles.md](../../docs/auth-and-roles.md)）。Laravel 的 `User` model 仍然對應 `users` 表，但欄位要改成業務表的欄位，例如密碼欄位是 `password_hash`，不是預設的 `password`。
 - `create_cache_table`、`create_jobs_table`：要不要留，看 Laravel 的快取與佇列放在哪裡。`services/laravel/.env.example` 目前的 `CACHE_STORE` 與 `QUEUE_CONNECTION` 都是 `database`，改成 Valkey 就用不到這兩張表；留下來的話，它們只寫在 Laravel 那一套裡，CI 比對時排除。
+
+### Go 那一套怎麼產生與更新
+
+`services/go/migrations/` 的第一版由 Atlas 從規格產生：`scripts/spec-schema.sh` 取出 [docs/data-model.md](../../docs/data-model.md) 的 SQL 當目標狀態，`atlas migrate diff` 比對 migration 目錄與目標狀態，產生差異的 migration 檔與 `atlas.sum`（檔案雜湊，`atlas migrate apply` 用它拒絕被手改過的 migration）。Atlas 用官方映像檔執行，需要一個空的資料庫當計算差異用的 dev database：
+
+```sh
+scripts/spec-schema.sh > /tmp/spec.sql
+docker run --rm --network tinyurl-test_default \
+  -v "$PWD/services/go/migrations:/migrations" -v /tmp/spec.sql:/spec.sql:ro \
+  arigaio/atlas:latest migrate diff <名稱> \
+  --dir file:///migrations --to file:///spec.sql \
+  --dev-url "postgres://<使用者>:<密碼>@postgres:5432/<空資料庫>?search_path=public&sslmode=disable"
+```
+
+目標狀態取自規格，不取自 Laravel 建出的資料庫：從那裡反向產生的話，Go 那一套是 Laravel 那一套的複本，CI 拿兩套互比就只是在比複本，Laravel 寫錯的地方會原樣複製過來。第一版產生時 Laravel 建出的 schema 已經和規格逐行相同（`pg_dump` 比對），兩個來源產生的結果相同。
+
+Atlas 把 CHECK 改寫成 PostgreSQL 內部儲存的形式（`BETWEEN 1 AND 100` 變成 `>= 1 AND <= 100`，`IN (...)` 變成 `= ANY (ARRAY[...])`），讀起來和規格不同，建出的約束相同。連線網址帶 `search_path=public` 時，Atlas 的紀錄表 `atlas_schema_revisions` 建在 `public` 裡，`pg_dump` 比對時要排除它（它沒有 sequence）。
 
 ### 換手與從現有資料庫產生 migration
 
