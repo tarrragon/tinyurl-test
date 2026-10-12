@@ -86,15 +86,18 @@ SQL
 | --- | --- | --- |
 | `EndpointDown` | Gatus 的探測失敗（只判斷可用性，見下） | 2 分鐘 |
 | `ContainerStopped` | 一個 compose 服務的所有容器都超過 60 秒沒被 cAdvisor 看到 | 1 分鐘 |
-| `ScrapeTargetDown` | Prometheus 連不到 exporter（`up == 0`） | 2 分鐘 |
+| `ScrapeTargetDown` | 15 分鐘內讀取成功的比例低於九成（`avg_over_time(up[15m])`；過載時讀取是間歇失敗，`up == 0` 加 `for` 會被打斷） | 2 分鐘 |
 | `ExporterBackendDown` | exporter 連不到它監控的服務（`pg_up`、`redis_up`、`nginx_up`） | 2 分鐘 |
-| `ScrapeNearTimeout` | 讀取 exporter 超過 8 秒（逾時 10 秒） | 5 分鐘 |
-| `HostCpuSaturated` | load 超過核心數的 1.5 倍 | 5 分鐘 |
+| `ScrapeNearTimeout` | 5 分鐘內讀取 exporter 的最大耗時超過 8 秒（逾時 10 秒） | 5 分鐘 |
+| `ProbeSlow` | 後端探測回應時間 15 分鐘的 p95 超過 0.5 秒（後端輸出延遲分布之前的延遲訊號） | 10 分鐘 |
+| `HostCpuSaturated` | load 超過核心數的 1.5 倍，或 steal 佔一成以上的 CPU 時間 | 5 分鐘 |
 | `HostDiskLow` | 任一顆磁碟剩不到 10%（依裝置分組） | 10 分鐘 |
 
-- **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲的告警（`ServiceSlow`）等後端輸出延遲分布之後依 p95 判斷，抑制規則已先寫好。
+- **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲改由 `ProbeSlow` 以探測回應時間在時間窗內的 p95 判斷；後端輸出延遲分布之後再加依 histogram 的 `ServiceSlow`。
+- **間歇的條件先在時間窗內聚合**：讀取耗時與讀取失敗在過載時是間歇的，原始值加 `for` 每次評估都要成立，兩次尖峰之間就被打斷。實測近 6 小時，`scrape_duration_seconds > 8` 加 `for: 5m` 沒有成立過，改成 5 分鐘內的最大值之後，cadvisor 那一組條件連續成立最長 32 分鐘。
 - **`ContainerStopped` 用 `min`**：服務重建之後，cAdvisor 同時留著舊容器與新容器兩條序列，舊的停止前進。實測重建 `nginx-exporter` 之後 150 秒，`max` 是 161 秒（會誤報），`min` 是 10 秒。
-- **抑制**：`HostCpuSaturated` 成立時壓下 `ScrapeNearTimeout`（之後也壓 `ServiceSlow`）。它算的是虛擬機的 load，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。
+- **抑制**：`HostCpuSaturated` 成立時壓下 warning 級的 `ScrapeNearTimeout`、`ProbeSlow`（之後也壓 `ServiceSlow`）；會通知值班的症狀不抑制。它算的是虛擬機的 load 與 steal，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。單機所以沒有 `equal`；多台主機時替每個讀取對象加主機標籤，`instance` 是讀取對象的位址、不是主機。
+- **Watchdog 與主機外的訊號還沒做**：開發環境沒有主機外的機器與外部的心跳服務，Prometheus 自己停掉時沒有人知道；部署到正式環境時要補。
 - **通知管道還沒設**：告警只在 Alertmanager 的頁面上看得到。要通知時在 `alertmanager.yml` 加 receiver（例如 webhook、email），並決定誰會收到、多久內要回應。
 
 第一次接上時的驗收：停掉 `portal` 約 3.5 分鐘後，`EndpointDown`（前台）與 `ContainerStopped`（portal）成立並送到 Alertmanager；對 Alertmanager 送入合成的 `HostCpuSaturated` 與 `ScrapeNearTimeout`，後者的狀態是 `suppressed`；`HostDiskLow` 對 Mac 的磁碟（剩 2.4%）成立。

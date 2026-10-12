@@ -27,11 +27,25 @@ groups:
         annotations:
           summary: "{{ $labels.container_label_com_docker_compose_service }} 已有 {{ $value | humanizeDuration }} 沒被 cAdvisor 看到"
 
+  - name: latency
+    rules:
+      # 後端還沒輸出延遲分布（histogram）之前，延遲的告警用探測回應時間在 15 分鐘內的 p95：
+      # 單次探測雜訊大，取時間窗的分位數之後才可用；探測程式自己在過載主機上的等待也算在裡面
+      - alert: ProbeSlow
+        expr: quantile_over_time(0.95, gatus_results_duration_seconds{group="後端"}[15m]) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          scope: service
+        annotations:
+          summary: "{{ $labels.name }} 的探測回應時間 15 分鐘 p95 是 {{ $value | humanizeDuration }}"
+
   - name: monitoring
     rules:
-      # Prometheus 連不到 exporter
+      # Prometheus 連不到 exporter。過載時讀取是間歇失敗，up == 0 加上 for 會在兩次失敗之間被打斷而永遠不成立，
+      # 所以取 15 分鐘內讀取成功的比例
       - alert: ScrapeTargetDown
-        expr: up == 0
+        expr: avg_over_time(up[15m]) < 0.9
         for: 2m
         labels:
           severity: warning
@@ -49,9 +63,10 @@ groups:
         annotations:
           summary: "{{ $labels.job }} 的 exporter 連不到它監控的服務"
 
-      # 讀取耗時逼近 scrape_timeout（10 秒）：再慢下去讀取會失敗、資料出現空洞
+      # 讀取耗時逼近 scrape_timeout（10 秒）：再慢下去讀取會失敗、資料出現空洞。
+      # 讀取耗時是間歇的尖峰，原始值加 for 幾乎不會成立，所以先取 5 分鐘內的最大值；逾時改了 8 要跟著改
       - alert: ScrapeNearTimeout
-        expr: scrape_duration_seconds > 8
+        expr: max_over_time(scrape_duration_seconds[5m]) > 8
         for: 5m
         labels:
           severity: warning
@@ -61,10 +76,13 @@ groups:
 
   - name: host
     rules:
-      # 主機（macOS 上是 Docker 的虛擬機）的 load 超過核心數的 1.5 倍。
-      # 虛擬機外面的競爭不會讓它成立，見 README〈在 macOS 上跑時看不到 Mac 本身〉
+      # 主機（macOS 上是 Docker 的虛擬機）的 load 超過核心數的 1.5 倍，或 steal 佔了一成以上的 CPU 時間。
+      # Linux 的 load 含等磁碟讀寫的行程，磁碟爭用也會讓它成立。
+      # 虛擬機外面的競爭（Mac 上的其他程式）兩者都反映不到，見 README〈在 macOS 上跑時看不到 Mac 本身〉
       - alert: HostCpuSaturated
-        expr: node_load1 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1.5
+        expr: |
+          node_load1 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1.5
+          or avg without (cpu, mode) (rate(node_cpu_seconds_total{mode="steal"}[5m])) > 0.1
         for: 5m
         labels:
           severity: warning

@@ -9,9 +9,8 @@ receivers:
   - name: none
 
 inhibit_rules:
-  # 主機飽和時，讀取變慢是它造成的症狀，不另外通知
+  # 主機飽和時，讀取變慢與各服務變慢是它造成的症狀，不另外通知。
+  # 只抑制不通知值班的症狀（warning）；會通知值班的症狀不抑制，改由 group_by 依主機合併。
+  # 單機所以沒有 equal；多台主機時替每個讀取對象加 host 標籤，這裡寫 equal: [host]（instance 是讀取對象的位址，不是主機）
   - source_matchers: [alertname="HostCpuSaturated"]
-    target_matchers: [alertname="ScrapeNearTimeout"]
-  # 後端輸出延遲分布之後加 ServiceSlow 規則，同樣由 HostCpuSaturated 抑制
-  - source_matchers: [alertname="HostCpuSaturated"]
-    target_matchers: [alertname="ServiceSlow"]
+    target_matchers: [alertname=~"ScrapeNearTimeout|ProbeSlow|ServiceSlow", severity="warning"]
