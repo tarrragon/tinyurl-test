@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | Prometheus | 3.15.0 | `http://127.0.0.1:${PROMETHEUS_PORT:-9090}`，Status → Targets 看各 exporter 讀不讀得到 |
 | Grafana | 13.2.3 | `http://127.0.0.1:${GRAFANA_PORT:-3000}`，帳號 `admin`、密碼是 `.env` 的 `GRAFANA_ADMIN_PASSWORD` |
+| Alertmanager | 0.34.1 | `http://127.0.0.1:${ALERTMANAGER_PORT:-9093}`，看目前成立與被抑制的告警 |
 
 兩者只綁 `127.0.0.1`，不對外開放。後台的 `/admin/ops` 之後連到 Grafana（見 [docs/api.md](../../docs/api.md)〈前端的頁面路由〉）時，再決定經過入口 Nginx 的存取方式。
 
@@ -26,9 +27,9 @@
 macOS 上的 Docker（OrbStack、Docker Desktop、Colima）跑在一台 Linux 虛擬機裡，node_exporter 與 cAdvisor 都在這台虛擬機裡，回報的是虛擬機：
 
 - **CPU**：Mac 上其他程式把 CPU 吃滿時，虛擬機分到的時間變少，容器全面變慢，而虛擬機的 CPU 使用率與 load 都很低。實測同一個時間點，node_exporter 的 load 是 2.89，Mac 本機是 55。
-- **磁碟**：虛擬機的磁碟是存在 Mac 磁碟上的一個映像檔，虛擬機回報的可用空間（實測 34.6 GB）比 Mac 實際剩下的多（同時 15 GB）。Mac 的磁碟寫滿時虛擬機會被停掉，面板上看不到這個風險。
+- **磁碟**：node_exporter 看得到兩顆磁碟，剩餘空間不同。`device="/dev/vdb1"`（`/var/lib/docker` 等）是虛擬機放 Docker 資料的磁碟，它是存在 Mac 磁碟上的一個映像檔；`device="mac"`（`fstype="virtiofs"`，掛在 `/Users`、`/private` 等）是 OrbStack 掛進虛擬機的 Mac 本機磁碟。實測同一時間前者剩 48.9%、後者剩 2.4%：只看 Docker 那一顆會以為空間充足，而 Mac 的磁碟寫滿時虛擬機會被停掉。`HostDiskLow` 依裝置分組，兩顆都涵蓋。
 
-所以在 Mac 上做壓測或大量資料的實驗之前，先在 Mac 本機看一次 `uptime` 與 `df -h ~`。部署到 Linux 主機時，node_exporter 看到的就是那台主機。
+CPU 的負載在虛擬機裡沒有任何指標反映，所以在 Mac 上做壓測或大量資料的實驗之前，先在 Mac 本機跑 `scripts/host-preflight.sh`（每顆核心的 load 與 Docker 資料所在磁碟的剩餘空間，超過門檻時結束碼 1）。部署到 Linux 主機時，node_exporter 看到的就是那台主機。
 
 ## cAdvisor 讀不到容器名稱時
 
@@ -77,8 +78,29 @@ SQL
 
    監控只在出事時被讀，平常沒有人會發現它讀不到或讀錯。
 
+## 告警
+
+規則在 `prometheus/rules/alerts.yml`，分組與抑制在 `alertmanager/alertmanager.yml`。改完先檢查語法（指令寫在兩個檔案的開頭），再 `curl -X POST http://127.0.0.1:9090/-/reload` 讓 Prometheus 重新載入；Alertmanager 的設定改了要重啟它。
+
+| 規則 | 成立條件 | 持續 |
+| --- | --- | --- |
+| `EndpointDown` | Gatus 的探測失敗（只判斷可用性，見下） | 2 分鐘 |
+| `ContainerStopped` | 一個 compose 服務的所有容器都超過 60 秒沒被 cAdvisor 看到 | 1 分鐘 |
+| `ScrapeTargetDown` | Prometheus 連不到 exporter（`up == 0`） | 2 分鐘 |
+| `ExporterBackendDown` | exporter 連不到它監控的服務（`pg_up`、`redis_up`、`nginx_up`） | 2 分鐘 |
+| `ScrapeNearTimeout` | 讀取 exporter 超過 8 秒（逾時 10 秒） | 5 分鐘 |
+| `HostCpuSaturated` | load 超過核心數的 1.5 倍 | 5 分鐘 |
+| `HostDiskLow` | 任一顆磁碟剩不到 10%（依裝置分組） | 10 分鐘 |
+
+- **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲的告警（`ServiceSlow`）等後端輸出延遲分布之後依 p95 判斷，抑制規則已先寫好。
+- **`ContainerStopped` 用 `min`**：服務重建之後，cAdvisor 同時留著舊容器與新容器兩條序列，舊的停止前進。實測重建 `nginx-exporter` 之後 150 秒，`max` 是 161 秒（會誤報），`min` 是 10 秒。
+- **抑制**：`HostCpuSaturated` 成立時壓下 `ScrapeNearTimeout`（之後也壓 `ServiceSlow`）。它算的是虛擬機的 load，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。
+- **通知管道還沒設**：告警只在 Alertmanager 的頁面上看得到。要通知時在 `alertmanager.yml` 加 receiver（例如 webhook、email），並決定誰會收到、多久內要回應。
+
+第一次接上時的驗收：停掉 `portal` 約 3.5 分鐘後，`EndpointDown`（前台）與 `ContainerStopped`（portal）成立並送到 Alertmanager；對 Alertmanager 送入合成的 `HostCpuSaturated` 與 `ScrapeNearTimeout`，後者的狀態是 `suppressed`；`HostDiskLow` 對 Mac 的磁碟（剩 2.4%）成立。
+
 ## 讀數字時
 
 - **CPU 看時間窗內的平均，不看單次取樣**：`docker stats` 一次只取一個瞬間，同一個容器幾秒內可以從 0.1% 跳到 27%。面板用 `rate(...[1m])` 算一分鐘的平均。
 - **CPU 配額限流**那張圖只有設了 CPU 上限的容器才有資料；壓測時兩個後端要設相同的上限（見 [loadtest](../../loadtest/README.md)〈公平比較〉），這張圖才用得上。
-- **Gatus 的探測與容器的 healthcheck 判斷的條件不同**：Laravel 的探測條件是回應碼 200 且回應時間低於 500 ms，容器的 healthcheck 只看回應碼。主機過載時 Laravel 回應要 1 到 6 秒，Gatus 判失敗、容器照樣 healthy；兩者不一致時，代表服務活著但變慢了。
+- **回應時間看面板，不看單次探測**：Gatus 記錄的 `gatus_results_duration_seconds` 是單次探測的耗時，包含探測程式自己在過載主機上的等待；看趨勢可以，拿來判斷服務變慢要等後端的延遲分布。

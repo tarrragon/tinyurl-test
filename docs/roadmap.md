@@ -39,7 +39,7 @@
 
 **目標**：在加任何優化之前，先量出最簡單做法的能力，並建立之後每個階段都會用到的量測工具。
 
-- 新增 `infra/observability/`：指標收集（例如 Prometheus）與面板（例如 Grafana）加入 compose，Gatus 開啟 `metrics` 讓 Prometheus 收集探測結果；Nginx access log 與後端的結構化 log 照 [API 與路由規格](api.md)〈請求 log〉的欄位送進 log 系統，工程師在 Grafana 查逐筆請求；Go 版提供 `/-/metrics`（放在 `/-/` 下的理由見 [系統設計](system-design.md)〈健康檢查〉），輸出結構化 log。
+- 新增 `infra/observability/`：**資源監控與告警已提前接上**（Prometheus、Grafana、Alertmanager、cAdvisor、node_exporter、PostgreSQL／Valkey／Nginx 的 exporter、Gatus 的 `metrics`、告警規則與抑制，見 [infra/observability](../infra/observability/README.md)）；這個階段剩下的是：後端的延遲分布接上之後加 `ServiceSlow` 規則、決定告警的通知管道；Nginx access log 與後端的結構化 log 照 [API 與路由規格](api.md)〈請求 log〉的欄位送進 log 系統，工程師在 Grafana 查逐筆請求；Go 版提供 `/-/metrics`（放在 `/-/` 下的理由見 [系統設計](system-design.md)〈健康檢查〉），輸出結構化 log。
 - 照 [loadtest](../loadtest/README.md) 寫出轉址基準與短碼掃描兩個情境的腳本，以及產生測試資料的腳本。
 - 跑第一次壓測，記錄可承受的流量、先到極限的那一層、PostgreSQL 的連線數與查詢延遲、點擊數比對。
 

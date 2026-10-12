@@ -19,14 +19,16 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
 
-  # 兩個後端直接打各自的 /-/healthz，失敗時分得出是哪一個
+  # 兩個後端直接打各自的 /-/healthz，失敗時分得出是哪一個。
+  # 條件只判斷可用性（回應碼）：回應時間放進條件時，主機過載讓後端變慢就被判成失敗，
+  # 而原因在主機（見 infra/observability/README.md〈告警〉）。回應時間 Gatus 照樣記錄在
+  # gatus_results_duration_seconds，延遲的告警等後端輸出延遲分布之後依百分位數判斷。
   - name: Go 後端
     group: 後端
     url: "http://go:8080/-/healthz"
     interval: 30s
     conditions:
       - "[STATUS] == 200"
-      - "[RESPONSE_TIME] < 500"
 
   - name: Laravel 後端
     group: 後端
@@ -34,7 +36,6 @@ endpoints:
     interval: 30s
     conditions:
       - "[STATUS] == 200"
-      - "[RESPONSE_TIME] < 500"
 
   - name: 前台
     group: 前端

@@ -1,0 +1,85 @@
+# 告警規則。設計見 infra/observability/README.md〈告警〉：
+# 可用性與延遲分開判斷、條件持續一段時間才成立、主機飽和時抑制它造成的症狀（抑制規則在 alertmanager.yml）。
+# 改完用 promtool 檢查語法：
+#   docker run --rm -v "$PWD/infra/observability/prometheus:/p" --entrypoint promtool prom/prometheus:v3.15.0 check rules /p/rules/alerts.yml
+groups:
+  - name: availability
+    rules:
+      # Gatus 的探測連續失敗：後端與資料層每 30 秒一次、前端每 60 秒一次，2 分鐘約是 2 到 4 次
+      - alert: EndpointDown
+        expr: gatus_results_endpoint_success == 0
+        for: 2m
+        labels:
+          severity: critical
+          scope: service
+        annotations:
+          summary: "{{ $labels.name }}（{{ $labels.group }}）的探測持續失敗"
+
+      # 容器停了：cAdvisor 在容器停掉之後仍輸出最後的值，序列不會消失，
+      # 看 container_last_seen 有沒有停止前進。用 min：同一個服務重建後會有新舊兩個容器，
+      # 舊的那個停止前進，新的仍在前進，取最小值才不會在重建時誤報
+      - alert: ContainerStopped
+        expr: min by (container_label_com_docker_compose_service) (time() - container_last_seen{container_label_com_docker_compose_service!=""}) > 60
+        for: 1m
+        labels:
+          severity: critical
+          scope: service
+        annotations:
+          summary: "{{ $labels.container_label_com_docker_compose_service }} 已有 {{ $value | humanizeDuration }} 沒被 cAdvisor 看到"
+
+  - name: monitoring
+    rules:
+      # Prometheus 連不到 exporter
+      - alert: ScrapeTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: warning
+          scope: monitoring
+        annotations:
+          summary: "Prometheus 連不到 {{ $labels.job }}（{{ $labels.instance }}）"
+
+      # exporter 連得到，但它連不到它監控的服務（up 照樣是 1）
+      - alert: ExporterBackendDown
+        expr: pg_up == 0 or redis_up == 0 or nginx_up == 0
+        for: 2m
+        labels:
+          severity: warning
+          scope: monitoring
+        annotations:
+          summary: "{{ $labels.job }} 的 exporter 連不到它監控的服務"
+
+      # 讀取耗時逼近 scrape_timeout（10 秒）：再慢下去讀取會失敗、資料出現空洞
+      - alert: ScrapeNearTimeout
+        expr: scrape_duration_seconds > 8
+        for: 5m
+        labels:
+          severity: warning
+          scope: monitoring
+        annotations:
+          summary: "讀取 {{ $labels.job }} 要 {{ $value | humanize }} 秒，逼近 10 秒的逾時"
+
+  - name: host
+    rules:
+      # 主機（macOS 上是 Docker 的虛擬機）的 load 超過核心數的 1.5 倍。
+      # 虛擬機外面的競爭不會讓它成立，見 README〈在 macOS 上跑時看不到 Mac 本身〉
+      - alert: HostCpuSaturated
+        expr: node_load1 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+          scope: host
+        annotations:
+          summary: "主機的 load 是核心數的 {{ $value | humanize }} 倍"
+
+      # 同一顆磁碟常掛在好幾個掛載點，依裝置分組，一顆磁碟只發一則。
+      # OrbStack 上 device="mac"（virtiofs）是 Mac 本機的磁碟，/dev/vdb1 是虛擬機放 Docker 資料的那一顆，
+      # 兩顆的剩餘空間不同，都要涵蓋
+      - alert: HostDiskLow
+        expr: min by (device, fstype) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"}) < 0.10
+        for: 10m
+        labels:
+          severity: warning
+          scope: host
+        annotations:
+          summary: "磁碟 {{ $labels.device }}（{{ $labels.fstype }}）剩 {{ $value | humanizePercentage }}"
