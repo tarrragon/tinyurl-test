@@ -60,6 +60,11 @@ Atlas 把 CHECK 改寫成 PostgreSQL 內部儲存的形式（`BETWEEN 1 AND 100`
 
 資料庫被直接改過、沒有經過 migration 時，用反向產生找出差異：Atlas 的 `atlas schema inspect` 讀出資料庫現況，`atlas migrate diff` 把現況和 migration 目錄比對、產生差異 migration；Laravel 的 `php artisan schema:dump` 把現況匯出成 SQL 檔，要產生成 migration 類別得另裝套件。Go 這邊選 Atlas 就是為了這個能力：golang-migrate 與 goose 只照順序執行 SQL 檔，不讀資料庫的現況。
 
+## 種子資料與約束驗證
+
+- `seed/seed.sql`：兩個後端共用的種子資料，`scripts/seed.sh` 或 `php artisan db:seed` 執行它。只有這一份產生器的理由與參數見 [docs/data-model.md](../../docs/data-model.md)〈種子資料與約束驗證〉。
+- `verify/constraints.sql`：逐條驗證約束，`scripts/check-constraints.sh` 執行它；CI 對兩套 migration 建出的資料庫各跑一次。
+
 ## Docker
 
 直接使用官方 `postgres` 映像檔，不另寫 Dockerfile：

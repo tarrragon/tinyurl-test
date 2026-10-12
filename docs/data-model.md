@@ -480,6 +480,18 @@ type ClickRecorder interface {
 - 套件依職責切：`internal/redirect`（轉址的 handler 與上面的介面）、`internal/link`、`internal/auth`、`internal/stats`、`internal/analytics`（發送、轉換回報與分析彙總），PostgreSQL 與 Valkey 的實作放在 `internal/store/postgres`、`internal/store/valkey`。
 - 每張表一個 struct，可以是空值的欄位用指標（`*int64`、`*string`、`*time.Time`），例如 `Link.TeamID`、`Link.SendID`、`Link.OriginalURL`、`Link.DisabledAt`。網址、活動、管道依〈links〉的讀取規則組，單筆查詢在 SQL 裡 `LEFT JOIN sends`，列表用 GORM 的 `Preload`。
 
+## 種子資料與約束驗證
+
+兩個後端讀同一個資料庫，種子資料只有一份產生器：`infra/postgres/seed/seed.sql`。由兩種語言各寫一份的話，PHP 與 Go 的亂數產生器即使給同一個種子也產生不同的序列，兩份資料不可能相同，Go 與 Laravel 的壓測比較就不是在同一份資料上量的；一份 SQL 也比任一種語言逐列寫入快得多，壓測與成長實驗要的大量資料才產生得出來。
+
+- **執行**：`scripts/seed.sh`（`psql`），或 `php artisan db:seed`（`DatabaseSeeder` 只負責執行同一個檔案）。先清空全部業務表再重建，可以重複執行。
+- **量**：`SEED_LINKS`（一般連結，預設 300）、`SEED_SENDS`（發送次數，預設 6）、`SEED_RECIPIENTS`（每次的收件人數，預設 2,000），以 session 參數 `seed.*` 傳進 SQL。
+- **可重現**：亂數種子固定，同一組參數、同一個 PostgreSQL 主版本產生相同的資料（兩條執行路徑的資料指紋相同）；時間以執行當下的整點往前推，點擊才落在保留期內。
+- **內容**：兩個團隊與各角色的帳號（密碼都是 `password123`）、一般連結（含已到期、已停用與 `admin` 建立的沒有團隊的連結）、發送與收件人連結（網址、活動、管道只在 `sends`，其中一位收件人已清除）、保留期內的點擊（含預覽與掃描工具的 User-Agent 與到期後的點擊）、轉換與伺服器金鑰。彙總表不產生，由重算排程從點擊算出。短碼由 `id` 乘上與 62 互質的常數取 62⁶ 或 62⁷ 的餘數再轉 Base62，一對一所以不重複。
+- **不在這裡的**：各後端測試用的資料由各自的測試建立（factory、fixture），它們驗證的就是各自的實作，不跟種子資料共用。建立發送的 `ON CONFLICT ... RETURNING`（見〈短碼重複的判斷〉）由各後端的整合測試驗證，種子資料不經過後端的程式。
+
+**約束驗證**：`infra/postgres/verify/constraints.sql`（`scripts/check-constraints.sh`）逐條寫入違規與合規的資料，確認每一筆違規都被指名的約束擋下、合規的寫入成功，結束時回滾；自己建立需要的列，空的資料庫也能跑。兩套 migration 建出的資料庫都跑同一份，有任何一條不符時結束碼不是 0。新增或修改約束時，同時在這份檔案加對應的一列。
+
 ## Laravel 的 migration
 
 `services/laravel/database/migrations/` 每張表一個檔案，欄位用 Schema Builder 寫，Builder 寫不出的部分用 `DB::statement` 照上面的 SQL 逐字寫。兩邊建出的 schema 以 `pg_dump --schema-only` 比對（Laravel 13.34 實測一致）。照 Builder 的預設寫，會和規格不同的地方：
@@ -495,11 +507,7 @@ type ClickRecorder interface {
 | `CHECK`、部分索引、`id DESC` 的索引 | 沒有對應的方法 | `DB::statement`，名稱照規格 |
 | `link_recipients.segments text[]` | 沒有陣列型別 | `ALTER TABLE ... ADD COLUMN`；欄位順序要和規格相同，所以 `erased_at` 在它之後才用 `Schema::table` 加 |
 
-建立發送的 `INSERT ... ON CONFLICT (code) DO NOTHING RETURNING id, code`（見〈短碼重複的判斷〉）在 Laravel 是 query builder 的 `insertOrIgnoreReturning($rows, ['id', 'code'], 'code')`；回傳的列不保證照寫入的順序，依 `code` 對回收件人。
-
-### 種子資料
-
-`php artisan migrate:fresh --seed` 依這份文件的規則產生開發與驗證用的資料，亂數種子固定，每次產生的資料相同：兩個團隊與各角色的帳號（密碼都是 `password123`）、一般連結（`SEED_LINKS`，預設 300 條，含已到期、已停用與 `admin` 建立的沒有團隊的連結）、發送（`SEED_SENDS` × `SEED_RECIPIENTS`，預設 6 次 × 2,000 位收件人，其中一位已清除）、保留期內的點擊（含預覽與掃描工具的 User-Agent 與到期後的點擊）、轉換與伺服器金鑰。彙總表不產生，由重算排程從點擊算出。種子資料用 query builder 的批次 `insert` 寫入，不經過 Eloquent model，也不用 Faker：Laravel 的映像檔以 `composer install --no-dev` 建置，裡面沒有 Faker。
+建立發送的 `INSERT ... ON CONFLICT (code) DO NOTHING RETURNING id, code`（見〈短碼重複的判斷〉）在 Laravel 是 query builder 的 `insertOrIgnoreReturning($rows, ['id', 'code'], 'code')`；回傳的列不保證照寫入的順序，依 `code` 對回收件人。這句寫法由 Laravel 的整合測試驗證。
 
 ## Laravel 的 model
 

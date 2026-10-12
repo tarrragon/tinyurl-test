@@ -47,7 +47,7 @@
 
 ## 兩套 migration 的 schema 比對
 
-Go 與 Laravel 各有一套 migration，同一個資料庫只由其中一套執行（理由見 [infra/postgres](../infra/postgres/README.md)〈誰管 schema〉），所以 CI 要確認兩套建出相同的 schema。這個 job 開兩個空的 PostgreSQL，一個跑 Laravel 的 migration、一個跑 Atlas 的 migration，再用 `pg_dump --schema-only` 或 `atlas schema diff` 比對兩邊，排除兩套工具的紀錄表與只有 Laravel 框架用的表（連同它們的 sequence，清單見 infra/postgres 的同一節）。第三個空的 PostgreSQL 執行 `scripts/spec-schema.sh` 取出的 [資料表與程式介面](data-model.md) SQL 區塊，建出規格的 schema，兩套都和它比對：只比兩套的話，兩套照同一個誤解寫錯時結果仍然一致。任一套 migration 改了就跑，從階段一起擋合併：此時兩套都已經寫出第一版，不一致就是其中一套寫錯了。
+Go 與 Laravel 各有一套 migration，同一個資料庫只由其中一套執行（理由見 [infra/postgres](../infra/postgres/README.md)〈誰管 schema〉），所以 CI 要確認兩套建出相同的 schema。這個 job 開兩個空的 PostgreSQL，一個跑 Laravel 的 migration、一個跑 Atlas 的 migration，再用 `pg_dump --schema-only` 或 `atlas schema diff` 比對兩邊，排除兩套工具的紀錄表與只有 Laravel 框架用的表（連同它們的 sequence，清單見 infra/postgres 的同一節）。第三個空的 PostgreSQL 執行 `scripts/spec-schema.sh` 取出的 [資料表與程式介面](data-model.md) SQL 區塊，建出規格的 schema，兩套都和它比對：只比兩套的話，兩套照同一個誤解寫錯時結果仍然一致。兩套 migration 建出的資料庫再各跑一次 `scripts/check-constraints.sh`，確認約束不只名稱相同、也擋得下該擋的寫入。任一套 migration 改了就跑，從階段一起擋合併：此時兩套都已經寫出第一版，不一致就是其中一套寫錯了。
 
 ## 不放進 CI 的項目
 
