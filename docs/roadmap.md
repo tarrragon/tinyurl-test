@@ -40,6 +40,10 @@
 **目標**：在加任何優化之前，先量出最簡單做法的能力，並建立之後每個階段都會用到的量測工具。
 
 - 新增 `infra/observability/`：**資源監控與告警已提前接上**（Prometheus、Grafana、Alertmanager、cAdvisor、node_exporter、PostgreSQL／Valkey／Nginx 的 exporter、Gatus 的 `metrics`、告警規則與抑制、ntfy 推播與 Watchdog 心跳，見 [infra/observability](../infra/observability/README.md)）；這個階段剩下的是：後端的延遲分布接上之後加 `ServiceSlow` 規則；Nginx access log 與後端的結構化 log 照 [API 與路由規格](api.md)〈請求 log〉的欄位送進 log 系統，工程師在 Grafana 查逐筆請求；Go 版提供 `/-/metrics`（放在 `/-/` 下的理由見 [系統設計](system-design.md)〈健康檢查〉），輸出結構化 log。
+- 監控接上之後還沒做完的（細節都在 [infra/observability](../infra/observability/README.md)）：
+  - **換上實際的通知管道**：本機 `infra/observability/alertmanager/secrets/` 目前指向測試時起的 ntfy 容器，那個容器已經刪除，所以現在每次送通知都失敗、`AlertmanagerNotificationsFailing` 會成立。照〈通知管道〉把兩個 `ntfy-*.url` 換成自己的 ntfy.sh topic，到 healthchecks.io 開一個檢查項目（週期 5 分鐘、寬限 5 分鐘）並把 ping 網址填進 `heartbeat.url`。完成條件：用〈通知管道〉的合成告警指令送一則 critical，手機響鈴收到；心跳服務顯示有收到心跳；停掉 Alertmanager 超過 10 分鐘，心跳服務發出通知。
+  - **ntfy 整個連不上時沒有通知**：兩個 topic 與失敗告警都經過 ntfy，見〈通知管道〉的故障一項；要補就把 `AlertmanagerNotificationsFailing` 另送到 email，或讓心跳服務也檢查 ntfy。
+  - **部署到雲端主機時才驗得到的**：從另一台電腦經 SSH 通道開 Grafana、Linux 主機上 `GRAFANA_ALLOW_CIDR` 比對到真實的來源位址、正式 CA 簽發的憑證（〈從別台電腦開 Grafana〉）；拆成多台主機時的服務拆分、Gatus 探測網址與 exporter 的 TLS（〈多台主機〉的「還沒做」）。
 - 照 [loadtest](../loadtest/README.md) 寫出轉址基準與短碼掃描兩個情境的腳本，以及產生測試資料的腳本。
 - 跑第一次壓測，記錄可承受的流量、先到極限的那一層、PostgreSQL 的連線數與查詢延遲、點擊數比對。
 
@@ -125,7 +129,7 @@
 - 秘密管理（目前用 `.env`）
 - 高可用：多個 PostgreSQL 與 Valkey 節點、多區域
 - 個人資料的保留期限與存取稽核（收件人對應的刪除請求在階段七提供，因為對應表與點擊事件分開存放，刪除只動一張表）
-- 告警與值班
+- 值班：告警已推播到 ntfy，但沒有輪班、升級（多久沒人回應就通知下一個人）與事後檢討的流程
 - 對外的狀態頁（觸發條件與設計見 [系統設計](system-design.md)〈健康檢查〉的〈對外的狀態頁〉）
 
 ## 前端的版本相容
