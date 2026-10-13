@@ -96,7 +96,8 @@ groups:
 
       # 同一顆磁碟常掛在好幾個掛載點，依裝置分組，一顆磁碟只發一則。
       # OrbStack 上 device="mac"（virtiofs）是 Mac 本機的磁碟，/dev/vdb1 是虛擬機放 Docker 資料的那一顆，
-      # 兩顆的剩餘空間不同，都要涵蓋
+      # 兩顆的剩餘空間不同，都要涵蓋。用比例不用位元組：virtiofs 那一顆的位元組被放大 256 倍（區塊大小欄位
+      # 填 1 MiB、區塊數以 4 KiB 計），比例不受影響。雲端主機的 ext4、xfs 沒有這個落差，同一條規則直接適用
       - alert: HostDiskLow
         expr: min by (device, fstype) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"}) < 0.10
         for: 10m

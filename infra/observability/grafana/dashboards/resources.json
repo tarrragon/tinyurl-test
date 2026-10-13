@@ -378,8 +378,8 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "磁碟可用空間",
-      "description": "macOS 上這是虛擬機的磁碟，Mac 本機的剩餘空間要在 Mac 上看",
+      "title": "磁碟剩餘比例",
+      "description": "每一顆磁碟可用空間占總大小的比例。顯示比例而不顯示位元組：OrbStack 掛進虛擬機的 Mac 磁碟（device=\"mac\"，virtiofs）回報的區塊大小欄位是 1 MiB 而區塊數以 4 KiB 計，node_exporter 算出的位元組放大 256 倍，比例不受影響。雲端主機的 ext4、xfs 兩個欄位相等，比例與 df 一致。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -392,7 +392,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes"
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
@@ -408,8 +410,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\"}",
-          "legendFormat": "{{mountpoint}}",
+          "expr": "min by (device, fstype) (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\"})",
+          "legendFormat": "{{device}}（{{fstype}}）",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
