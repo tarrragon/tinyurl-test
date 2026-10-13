@@ -14,6 +14,10 @@ inhibit_rules:
   # 只抑制不通知值班的症狀（warning）；會通知值班的症狀不抑制。
   # equal: [host]：一台主機飽和只壓下同一台主機上的症狀。host 標籤由 prometheus/targets/ 的清單加上，
   # instance 不能代替它（instance 是讀取對象的位址，同一台主機上每個 exporter 都不同）
+  # 整台主機讀不到時，同一台主機上各 exporter 的讀取失敗與逼近逾時都是它造成的
+  - source_matchers: [alertname="HostDown"]
+    target_matchers: [alertname=~"ScrapeTargetDown|ScrapeNearTimeout"]
+    equal: [host]
   - source_matchers: [alertname="HostCpuSaturated"]
     target_matchers: [alertname=~"ScrapeNearTimeout|ProbeSlow|ServiceSlow", severity="warning"]
     equal: [host]

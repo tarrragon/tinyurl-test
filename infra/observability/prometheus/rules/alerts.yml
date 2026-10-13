@@ -45,9 +45,10 @@ groups:
   - name: monitoring
     rules:
       # Prometheus 連不到 exporter。過載時讀取是間歇失敗，up == 0 加上 for 會在兩次失敗之間被打斷而永遠不成立，
-      # 所以取 15 分鐘內讀取成功的比例
+      # 所以取 15 分鐘內讀取成功的比例。and up：讀取對象從清單拿掉之後 up 不再有值，
+      # 時間窗裡移除前的失敗樣本就不再讓它成立（縮容、汰換主機時不會對已經不存在的主機告警十幾分鐘）
       - alert: ScrapeTargetDown
-        expr: avg_over_time(up[15m]) < 0.9
+        expr: avg_over_time(up[15m]) < 0.9 and up
         for: 2m
         labels:
           severity: warning
@@ -90,6 +91,18 @@ groups:
 
   - name: host
     rules:
+      # 整台主機讀不到：node_exporter 5 分鐘內沒有一次讀取成功。用最大值而不是比例：過載時的間歇失敗
+      # 中間總有成功的讀取，不會讓它成立。整台停掉時 cAdvisor 也讀不到，它的序列被標成過期，
+      # ContainerStopped 不會成立，所以主機停掉要有自己的一則，嚴重度與服務停止相同
+      - alert: HostDown
+        expr: max_over_time(up{job="node"}[5m]) == 0
+        for: 1m
+        labels:
+          severity: critical
+          scope: host
+        annotations:
+          summary: "{{ $labels.host }} 的 node_exporter 5 分鐘內沒有一次讀取成功，主機可能停了或網路斷了"
+
       # 主機（macOS 上是 Docker 的虛擬機）5 分鐘平均的 load 超過核心數的 1.5 倍，或 steal 佔了一成以上的 CPU 時間。
       # load1 是間歇跳動的原始值，直接加 for 會被打斷（實測 12 小時最長連續 2 分鐘），所以先取 5 分鐘平均。
       # 1.5 與 0.1 是起始值，以主機平常的基準校正。Linux 的 load 含等磁碟讀寫的行程，磁碟爭用也會讓它成立。

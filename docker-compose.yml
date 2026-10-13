@@ -131,41 +131,11 @@ services:
     volumes:
       - ./infra/monitoring/gatus:/config:ro
 
-  # ---- 每台主機都要跑的 exporter ----
-  # Prometheus、Alertmanager、Grafana 在 compose.monitoring.yml；單機時 .env 的 COMPOSE_FILE 把兩個檔一起帶進來，
-  # 多台主機時被監控的主機只跑這個檔，exporter 的連接埠由 compose.exporters-published.yml 開在私有網路的位址上。
+  # ---- 跟著服務走的 exporter（資料庫、快取、入口）----
+  # 主機層的 node_exporter 與 cAdvisor 在 compose.host-exporters.yml（監控主機自己也要跑）；
+  # Prometheus、Alertmanager、Grafana 在 compose.monitoring.yml。各主機用哪幾個檔由 .env 的 COMPOSE_FILE 決定，
+  # 多台主機時 exporter 的連接埠由 compose.exporters-published.yml 開在私有網路的位址上。
   # 各層看得到與看不到的範圍、驗收方式、多台主機的拆法見 infra/observability/README.md。
-
-  # 每個容器的資源用量。cAdvisor 要問容器執行環境的 containerd 才知道 cgroup 對應哪個容器；
-  # 找不到 socket 時指標只剩 cgroup 的雜湊 id、沒有容器名稱與 compose 標籤（位置怎麼找見 README）
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    restart: unless-stopped
-    privileged: true
-    command:
-      - --containerd=${CADVISOR_CONTAINERD_SOCKET:-/run/containerd/containerd.sock}
-      - --docker_only=true
-      - --housekeeping_interval=15s
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-
-  # 主機的 CPU、記憶體、load 與磁碟。留在 compose 網路裡時，它看到的網路介面是自己容器的，
-  # 所以關掉網路相關的收集器，網路流量改看 cAdvisor 的每個容器
-  node-exporter:
-    image: quay.io/prometheus/node-exporter:v1.12.1
-    restart: unless-stopped
-    pid: host
-    command:
-      - --path.rootfs=/host
-      - --no-collector.netdev
-      - --no-collector.netstat
-      - --no-collector.sockstat
-    volumes:
-      - /:/host:ro,rslave
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.20.1

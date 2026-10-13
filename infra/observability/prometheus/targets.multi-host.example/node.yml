@@ -4,3 +4,6 @@
   labels: {host: app-2}
 - targets: ["10.0.1.21:9100"]
   labels: {host: db-1}
+# 監控主機自己的 exporter，和 Prometheus 在同一個 compose 專案，用服務名稱連
+- targets: ["node-exporter:9100"]
+  labels: {host: monitor-1}

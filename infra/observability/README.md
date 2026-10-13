@@ -86,15 +86,16 @@ SQL
 | --- | --- | --- |
 | `EndpointDown` | Gatus 的探測失敗（只判斷可用性，見下） | 2 分鐘 |
 | `ContainerStopped` | 一台主機上，一個 compose 服務的所有容器都超過 60 秒沒被 cAdvisor 看到（依 `host` 與服務分組） | 1 分鐘 |
-| `ScrapeTargetDown` | 15 分鐘內讀取成功的比例低於九成（`avg_over_time(up[15m])`；過載時讀取是間歇失敗，`up == 0` 加 `for` 會被打斷） | 2 分鐘 |
+| `ScrapeTargetDown` | 15 分鐘內讀取成功的比例低於九成（`avg_over_time(up[15m])`；過載時讀取是間歇失敗，`up == 0` 加 `for` 會被打斷）；讀取對象從清單拿掉之後不再成立（`and up`） | 2 分鐘 |
 | `ExporterBackendDown` | exporter 連不到它監控的服務（`pg_up`、`redis_up`、`nginx_up`） | 2 分鐘 |
 | `ScrapeNearTimeout` | 5 分鐘內讀取 exporter 的最大耗時超過 8 秒（逾時 10 秒） | 5 分鐘 |
 | `ProbeSlow` | 15 分鐘內回應超過 0.5 秒的後端探測佔兩成以上（後端輸出延遲分布之前的延遲訊號；30 次探測取分位數近於取最慢的幾次，所以看比例） | 10 分鐘 |
 | `HostCpuSaturated` | 5 分鐘平均的 load 超過核心數的 1.5 倍，或 steal 佔一成以上的 CPU 時間；成立後多撐 15 分鐘（`keep_firing_for`），症狀的時間窗退完之前抑制不解除 | 5 分鐘 |
+| `HostDown` | 一台主機的 node_exporter 5 分鐘內沒有一次讀取成功（critical；整台停掉時 cAdvisor 的序列過期，`ContainerStopped` 不會成立） | 1 分鐘 |
 | `HostDiskLow` | 任一顆磁碟剩不到 10%（依主機與裝置分組） | 10 分鐘 |
 | `HostTargetsMissing` | node job 沒有任何讀取目標（`targets/node.yml` 空了）；個別主機停掉由 `ScrapeTargetDown` 處理 | 5 分鐘 |
 
-- **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲改由 `ProbeSlow` 以探測回應時間在時間窗內的 p95 判斷；後端輸出延遲分布之後再加依 histogram 的 `ServiceSlow`。
+- **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲改由 `ProbeSlow` 以時間窗內慢探測的比例判斷；後端輸出延遲分布之後再加依 histogram 的 `ServiceSlow`。
 - **間歇的條件先在時間窗內聚合**：讀取耗時與讀取失敗在過載時是間歇的，原始值加 `for` 每次評估都要成立，兩次尖峰之間就被打斷。實測近 6 小時，`scrape_duration_seconds > 8` 加 `for: 5m` 沒有成立過，改成 5 分鐘內的最大值之後，cadvisor 那一組條件連續成立最長 32 分鐘。主機飽和的規則同樣如此：`node_load1` 直接加 `for` 在 12 小時裡最長連續成立 2 分鐘，改成 5 分鐘平均後最長 9 分鐘。
 - **`ContainerStopped` 用 `min`**：服務重建之後，cAdvisor 同時留著舊容器與新容器兩條序列，舊的停止前進。實測重建 `nginx-exporter` 之後 150 秒，`max` 是 161 秒（會誤報），`min` 是 10 秒。
 - **抑制**：`HostCpuSaturated` 成立時壓下 warning 級的 `ScrapeNearTimeout`、`ProbeSlow`（之後也壓 `ServiceSlow`）；會通知值班的症狀不抑制。它算的是虛擬機的 load 與 steal，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。抑制規則寫 `equal: [host]`，一台主機飽和只壓下同一台主機上的症狀；`host` 標籤由 `prometheus/targets/` 的清單加上（`instance` 是讀取對象的位址，同一台主機上每個 exporter 都不同，不能代替它）。
@@ -105,13 +106,13 @@ SQL
 
 ## 多台主機
 
-監控的元件分成兩組：每台主機都要跑的 exporter（node_exporter、cAdvisor，以及跟著服務走的 postgres_exporter、redis_exporter、nginx-prometheus-exporter）在 `docker-compose.yml`；只在監控主機跑的 Prometheus、Alertmanager、Grafana 在 `compose.monitoring.yml`。三種主機各自用 `.env` 的 `COMPOSE_FILE` 決定讀哪些檔：
+監控的元件分成三組：每一台主機（含監控主機）都要跑的 node_exporter 與 cAdvisor 在 `compose.host-exporters.yml`；跟著服務走的 postgres_exporter、redis_exporter、nginx-prometheus-exporter 和服務一起在 `docker-compose.yml`；只在監控主機跑的 Prometheus、Alertmanager、Grafana 在 `compose.monitoring.yml`。三種主機各自用 `.env` 的 `COMPOSE_FILE` 決定讀哪些檔（分隔符在 Linux、macOS 是 `:`，Windows 是 `;`）：
 
 | 主機 | `COMPOSE_FILE` | 另外要設 |
 | --- | --- | --- |
-| 單機（服務與監控在同一台） | `docker-compose.yml:compose.monitoring.yml` | 無 |
-| 被監控的主機 | `docker-compose.yml:compose.exporters-published.yml` | `EXPORTER_BIND_ADDR`：這台的私有網路位址，exporter 的連接埠只開在這個位址上，再用防火牆或 security group 限制只有監控主機能連（exporter 沒有認證） |
-| 監控主機 | `compose.monitoring.yml` | `prometheus/targets/` 換成全部主機的清單 |
+| 單機（服務與監控在同一台） | `docker-compose.yml:compose.host-exporters.yml:compose.monitoring.yml` | 無 |
+| 被監控的主機 | `docker-compose.yml:compose.host-exporters.yml:compose.exporters-published.yml` | `EXPORTER_BIND_ADDR`：這台的私有網路位址，exporter 的連接埠只開在這個位址上，再用 security group 或主機防火牆限制只有監控主機能連（exporter 沒有認證；Linux 上 Docker 發佈的連接埠不經過 ufw 的規則，主機防火牆要寫在 `DOCKER-USER` 鏈） |
+| 監控主機 | `compose.host-exporters.yml:compose.monitoring.yml` | `prometheus/targets/` 換成全部主機的清單，自己的 node_exporter 與 cAdvisor 以服務名稱列在裡面 |
 
 **讀哪些主機寫在清單裡**：`prometheus/targets/` 每個 job 一個檔（file_sd），每個目標帶 `host` 標籤，代表它回報的是哪台主機；單機時全部是 `app-1`，多台主機的寫法在 `prometheus/targets.multi-host.example/`。清單由部署工具從主機清單產生，Prometheus 監看這些檔案，存檔後幾秒內生效，不必重新載入（`refresh_interval: 30s` 是監看失效時的備援）。清單同時是「預期要有哪些主機」的來源：一台主機停掉時它仍在清單上，`up` 變成 0，由 `ScrapeTargetDown` 依 `host` 各自成立；清單整個空了由 `HostTargetsMissing` 處理。改用雲端的服務發現（例如 `ec2_sd_configs`）時，主機被刪掉會從清單上消失、`up` 序列跟著消失，那時要另外比對預期的主機數。
 

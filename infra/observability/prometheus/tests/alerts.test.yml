@@ -63,3 +63,27 @@ tests:
               job: node
             exp_annotations:
               summary: "node job 沒有任何讀取目標，檢查 targets/node.yml"
+
+  # 有意移除的主機：失敗 2 分鐘之後從清單拿掉（序列過期），ScrapeTargetDown 不對它繼續成立
+  - interval: 15s
+    input_series:
+      - series: 'up{job="node", instance="10.0.1.13:9100", host="app-3"}'
+        values: '1x59 0x7 stale'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ScrapeTargetDown
+        exp_alerts: []
+
+  # 整台主機停掉：HostDown 是 critical；過載的間歇失敗不讓它成立
+  - interval: 15s
+    input_series:
+      - series: 'up{job="node", instance="10.0.1.21:9100", host="db-1"}'
+        values: '1x59 0x40'
+      - series: 'up{job="node", instance="10.0.1.11:9100", host="app-1"}'
+        values: '1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1 0 0 1 0 1'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: HostDown
+        exp_alerts:
+          - exp_labels: {severity: critical, scope: host, job: node, instance: 10.0.1.21:9100, host: db-1}
+            exp_annotations: {summary: "db-1 的 node_exporter 5 分鐘內沒有一次讀取成功，主機可能停了或網路斷了"}
