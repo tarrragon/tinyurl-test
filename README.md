@@ -68,7 +68,7 @@ cp .env.example .env
 docker compose up -d postgres cache   # 目前只有這兩個起得來
 ```
 
-`.env` 的 `COMPOSE_FILE` 讓 `docker compose` 同時讀 `docker-compose.yml`（應用服務與跟著服務走的 exporter）、`compose.host-exporters.yml`（主機與容器的 exporter）與 `compose.monitoring.yml`（Prometheus、Alertmanager、Grafana）。監控起來之後的網址、帳號與日常操作見 [infra/observability](infra/observability/README.md)〈使用〉，服務探測見 [infra/monitoring](infra/monitoring/README.md)。
+`.env` 的 `COMPOSE_FILE` 讓 `docker compose` 同時讀 `docker-compose.yml`（應用服務與跟著服務走的 exporter）、`compose.host-exporters.yml`（主機與容器的 exporter）與 `compose.monitoring.yml`（Prometheus、Alertmanager、Grafana）。監控起來之後的網址、帳號與日常操作見 [infra/observability](infra/observability/README.md)〈使用〉，服務探測見 [infra/monitoring](infra/monitoring/README.md)。另外兩個檔不在預設組合裡：`compose.exporters-published.yml` 在拆成多台主機時把 exporter 的連接埠開給監控主機（見〈多台主機〉），`compose.grafana-proxy.yml` 讓沒有 SSH 帳號的人以 HTTPS 開 Grafana（見〈從別台電腦開 Grafana〉），兩節都在 [infra/observability](infra/observability/README.md)。
 
 ## 待決定
 

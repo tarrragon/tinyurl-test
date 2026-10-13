@@ -37,6 +37,7 @@ docker compose stop prometheus alertmanager grafana
 | 告警的分組、抑制、通知管道 | `alertmanager/alertmanager.yml` | `curl -X POST http://127.0.0.1:9093/-/reload` |
 | 面板 | `grafana/dashboards/resources.json` | 存檔後約 10 秒 Grafana 自己重讀 |
 | Grafana 的資料來源 | `grafana/provisioning/datasources/prometheus.yml` | `docker compose restart grafana` |
+| Grafana 對外代理的網域、允許的網段 | `grafana-proxy/templates/grafana.conf.template`，值在 `.env` | `docker compose up -d grafana-proxy grafana` |
 | 各服務的映像版本、掛載、連接埠 | `compose.monitoring.yml`、`compose.host-exporters.yml`、`docker-compose.yml` | `docker compose up -d <服務>`（compose 判定定義變了才重建） |
 
 設定檔都是以整個目錄唯讀掛進容器，改的是主機上 repo 裡的檔案。重新載入之後，在 Prometheus 的 Status → Configuration、Alertmanager 的 `GET /api/v2/status` 確認載入的是新內容；語法錯的設定會被拒絕，程式繼續用舊的，所以先檢查：
@@ -56,7 +57,50 @@ docker run --rm -v "$PWD/infra/observability/prometheus:/p" -w /p/tests \
 - **Alertmanager**（`http://127.0.0.1:9093`）：目前送進來的告警，以及哪些被抑制。還沒有通知管道，告警只在這裡看得到。
 - **Gatus**（`http://localhost:8090`）：各服務從外部探測通不通，見 [infra/monitoring](../monitoring/README.md)。
 
-三個監控網頁只綁 `127.0.0.1`，從別台電腦連不到；Gatus 綁全部介面。
+三個監控網頁只綁 `127.0.0.1`，從別台電腦連不到（要從別台電腦開 Grafana，見〈從別台電腦開 Grafana〉）；Gatus 綁全部介面。
+
+### 從別台電腦開 Grafana
+
+Grafana 只綁監控主機的 `127.0.0.1:3000`，從別台電腦連不到。要看 Grafana 的人有兩種連法，選哪一種看他有沒有這台主機的 SSH 或 VPN 帳號。
+
+**有 SSH 帳號（預設）**：在自己的電腦上開一條 SSH 通道，把本機的 3000 轉到監控主機的 `127.0.0.1:3000`，再用瀏覽器開 `http://127.0.0.1:3000`：
+
+```sh
+# monitor-1 換成監控主機的位址或 ~/.ssh/config 裡的名稱；-N 只轉送、不開 shell
+ssh -N -L 3000:127.0.0.1:3000 monitor-1
+```
+
+這條路不必對外開任何連接埠，也不必準備網域與憑證，Grafana 的登入頁不會出現在網際網路上。用 VPN（例如 Tailscale）時，把 Grafana 改綁在 VPN 的介面位址上，效果相同。
+
+**沒有 SSH 或 VPN 帳號的人也要看**：監控主機的 `COMPOSE_FILE` 加上 `compose.grafana-proxy.yml`，在 Grafana 前面放一個只做這件事的 Nginx，以 HTTPS 對外。要設的值：
+
+| 變數 | 填什麼 |
+| --- | --- |
+| `GRAFANA_DOMAIN` | 開 Grafana 用的網域，DNS 指向監控主機。Grafana 的 `GF_SERVER_ROOT_URL` 由它產生，登入後的轉址與告警通知裡的連結都用這個網址 |
+| `GRAFANA_ALLOW_CIDR` | 允許連進來的網段，例如辦公室的對外 IP 加 `/32`；其他來源回 403 |
+| `GRAFANA_TLS_DIR` | 放 `fullchain.pem` 與 `privkey.pem` 的目錄。雲端上用 Let's Encrypt 這類 CA 簽發的憑證；本機測試可以自簽（見下方） |
+
+代理放在監控主機上、和 Grafana 同一個 compose 專案，不經過應用的入口 Nginx：應用入口過載或停掉時，正是要看監控的時候，監控畫面不能跟著斷。經由應用入口轉送的做法在多台主機時也行不通：入口 Nginx 的設定寫了 `proxy_pass http://grafana:3000`，而應用主機上沒有 `grafana` 這個服務，`nginx -t` 回 `host not found in upstream`，整個入口起不來。
+
+本機測試（OrbStack，`*.localhost` 會解析到本機）：
+
+```sh
+# 自簽一張 grafana.localhost 的憑證，tls/ 已列在 .gitignore
+mkdir -p infra/observability/grafana-proxy/tls
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=grafana.localhost" \
+  -addext "subjectAltName=DNS:grafana.localhost" \
+  -keyout infra/observability/grafana-proxy/tls/privkey.pem \
+  -out infra/observability/grafana-proxy/tls/fullchain.pem
+# .env 加上這幾行，COMPOSE_FILE 結尾加 :compose.grafana-proxy.yml，然後 docker compose up -d
+#   GRAFANA_DOMAIN=grafana.localhost
+#   GRAFANA_ALLOW_CIDR=0.0.0.0/0
+#   GRAFANA_TLS_DIR=./infra/observability/grafana-proxy/tls
+curl -sk -o /dev/null -w "%{http_code} %{redirect_url}\n" https://grafana.localhost/   # 302 https://grafana.localhost/login
+```
+
+本機實測的結果：根路徑轉到 `https://grafana.localhost/login`；`/api/live/ws` 的 WebSocket 升級回 101，拿掉代理設定裡 `/api/live/` 那一段之後回 400，面板的即時更新因此失效；`GRAFANA_ALLOW_CIDR` 設成不含自己的網段時回 403；用 IP 直接連時代理不回應（`return 444`），只回應帶了 `GRAFANA_DOMAIN` 的請求。
+
+`GRAFANA_ALLOW_CIDR` 比對的是 Nginx 看到的來源位址，所以它只在連線直接到達這台主機時有效。在 macOS 上 Nginx 看到的全是 OrbStack 虛擬機的閘道位址（實測 `192.168.117.1`），本機測試只能設 `0.0.0.0/0`。代理前面還有一層雲端負載平衡器時，看到的是負載平衡器的位址，要改用 Nginx 的 `real_ip` 模組從 `X-Forwarded-For` 取回真正的來源，或者把來源限制放在 security group。登入本身由 Grafana 處理：同一個帳號連續登入失敗 5 次之後暫時鎖住，鎖住期間連正確的密碼也回 401，回應和密碼錯誤時一樣，原因只寫在 Grafana 的日誌（`too many consecutive incorrect login attempts`），幾分鐘後自動解除（實測 3 分鐘時仍鎖著、6 分半時已解除）；有人在掃登入頁時，管理者自己也會被擋在外面，這是對外開放登入頁的代價之一。要改成公司的帳號登入時用 Grafana 的 OAuth 設定，或者把認證放在代理前面的身分驗證服務。
 
 ### 常見操作
 
@@ -195,7 +239,7 @@ SQL
 | --- | --- | --- |
 | 單機（服務與監控在同一台） | `docker-compose.yml:compose.host-exporters.yml:compose.monitoring.yml` | 無 |
 | 被監控的主機 | `docker-compose.yml:compose.host-exporters.yml:compose.exporters-published.yml` | `EXPORTER_BIND_ADDR`：這台的私有網路位址，exporter 的連接埠只開在這個位址上，再用 security group 或主機防火牆限制只有監控主機能連（exporter 沒有認證；Linux 上 Docker 發佈的連接埠不經過 ufw 的規則，主機防火牆要寫在 `DOCKER-USER` 鏈） |
-| 監控主機 | `compose.host-exporters.yml:compose.monitoring.yml` | `prometheus/targets/` 換成全部主機的清單，自己的 node_exporter 與 cAdvisor 以服務名稱列在裡面 |
+| 監控主機 | `compose.host-exporters.yml:compose.monitoring.yml` | `prometheus/targets/` 換成全部主機的清單，自己的 node_exporter 與 cAdvisor 以服務名稱列在裡面；沒有 SSH 帳號的人也要開 Grafana 時再加 `:compose.grafana-proxy.yml`，見〈從別台電腦開 Grafana〉 |
 
 **讀哪些主機寫在清單裡**：`prometheus/targets/` 每個 job 一個檔（file_sd），每個目標帶 `host` 標籤，代表它回報的是哪台主機；單機時全部是 `app-1`，多台主機的寫法在 `prometheus/targets.multi-host.example/`。清單由部署工具從主機清單產生，Prometheus 監看這些檔案，存檔後幾秒內生效，不必重新載入（`refresh_interval: 30s` 是監看失效時的備援）。清單同時是「預期要有哪些主機」的來源：一台主機停掉時它仍在清單上，`up` 變成 0，由 `ScrapeTargetDown` 依 `host` 各自成立；清單整個空了由 `HostTargetsMissing` 處理。改用雲端的服務發現（例如 `ec2_sd_configs`）時，主機被刪掉會從清單上消失、`up` 序列跟著消失，那時要另外比對預期的主機數。
 

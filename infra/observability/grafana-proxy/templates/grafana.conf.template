@@ -1,0 +1,43 @@
+# Grafana 的對外入口。nginx 映像啟動時以 envsubst 把 ${GRAFANA_DOMAIN}、${GRAFANA_ALLOW_CIDR}
+# 換成環境變數的值，輸出到 /etc/nginx/conf.d/grafana.conf；$host 這類 Nginx 自己的變數不是環境變數，原樣保留。
+
+# Grafana Live 以 WebSocket 推送面板更新：請求帶 Upgrade 時轉成升級連線，沒帶時照一般請求轉送
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${GRAFANA_DOMAIN};
+
+    # 憑證由 compose.grafana-proxy.yml 從 GRAFANA_TLS_DIR 唯讀掛進來
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+
+    # 只讓來自這個網段的連線進來；登入頁不必對整個網際網路開放
+    allow ${GRAFANA_ALLOW_CIDR};
+    deny all;
+
+    location / {
+        # Grafana 依 Host 與 GF_SERVER_ROOT_URL 產生轉址與連結，Host 要原樣傳過去
+        proxy_set_header Host $host;
+        proxy_pass http://grafana:3000;
+    }
+
+    location /api/live/ {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_pass http://grafana:3000;
+    }
+}
+
+# 沒有符合的 server_name（用 IP 直接連、或帶了別的網域）時不回應任何內容
+server {
+    listen 443 ssl default_server;
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    return 444;
+}

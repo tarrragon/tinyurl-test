@@ -1,0 +1,26 @@
+# 讓沒有 SSH 或 VPN 的人也能用瀏覽器開 Grafana 時，監控主機加上這個檔：在 Grafana 前面放一個只做這件事的 Nginx，
+# 以 HTTPS 對外，只接受 GRAFANA_ALLOW_CIDR 來的連線。只有工程師要看時不必加，用 SSH 通道連 127.0.0.1:3000
+# （見 infra/observability/README.md〈從別台電腦開 Grafana〉）。
+# 這個代理和 Grafana 在同一台監控主機，不經過應用的入口 Nginx：應用入口過載或停掉時，監控畫面仍連得上。
+#   COMPOSE_FILE 在監控主機的組合後面加上 :compose.grafana-proxy.yml
+
+services:
+  grafana-proxy:
+    image: nginx:1.30-alpine
+    restart: unless-stopped
+    environment:
+      GRAFANA_DOMAIN: ${GRAFANA_DOMAIN:?設成開 Grafana 用的網域，例如 grafana.example.com}
+      GRAFANA_ALLOW_CIDR: ${GRAFANA_ALLOW_CIDR:?設成允許連進來的網段，例如辦公室的對外 IP/32}
+    ports:
+      - "443:443"
+    volumes:
+      - ./infra/observability/grafana-proxy/templates:/etc/nginx/templates:ro
+      - ${GRAFANA_TLS_DIR:?設成放 fullchain.pem 與 privkey.pem 的目錄}:/etc/nginx/tls:ro
+    depends_on:
+      - grafana
+
+  grafana:
+    environment:
+      # Grafana 產生的轉址、登入後回到的頁面、告警通知裡的連結都以這個網址為準；
+      # 不設的話它以 http://localhost:3000 產生，經過代理的使用者會被轉到自己電腦上的 localhost
+      GF_SERVER_ROOT_URL: https://${GRAFANA_DOMAIN}/
