@@ -88,7 +88,7 @@ tests:
           - exp_labels: {severity: critical, scope: host, job: node, instance: 10.0.1.21:9100, host: db-1}
             exp_annotations: {summary: "db-1 的 node_exporter 5 分鐘內沒有一次讀取成功，主機可能停了或網路斷了"}
 
-  # 心跳沒有任何輸入也成立；通知失敗的告警依 integration 分開，10 分鐘內沒有新的失敗就不再成立
+  # 心跳沒有任何輸入也成立；通知失敗的告警帶 integration 標籤，10 分鐘內沒有新的失敗就不再成立
   - interval: 1m
     input_series:
       - series: 'alertmanager_notifications_failed_total{job="alertmanager", host="app-1", integration="webhook", reason="other"}'
