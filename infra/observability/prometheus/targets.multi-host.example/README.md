@@ -10,5 +10,5 @@
 | db-1  | PostgreSQL、Valkey                             | node_exporter、cAdvisor、postgres_exporter、redis_exporter |
 
 每個 exporter 跟著它監控的服務走：資料庫在 db-1，postgres_exporter 就在 db-1，`host` 填 db-1。
-清單由部署工具（Ansible、Terraform）從主機清單產生，主機增減時重新產生；Prometheus 每 30 秒重讀一次，不必重新載入。
+清單由部署工具（Ansible、Terraform）從主機清單產生，主機增減時重新產生；Prometheus 監看這些檔案，存檔後幾秒內生效，不必重新載入。
 清單是「預期要有哪些主機」的來源：一台主機停掉時它仍在清單上，`up` 變成 0，`ScrapeTargetDown` 會成立。

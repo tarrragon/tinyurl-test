@@ -1,6 +1,6 @@
 # Prometheus 的讀取清單：每 15 秒到各個 exporter 讀一次。各層看得到與看不到的範圍見 infra/observability/README.md。
 # 讀哪些主機寫在 targets/ 的清單裡（file_sd），每個目標帶 host 標籤，代表它回報的是哪台主機。
-# 主機增減時只改清單，不改這個檔；多台主機的清單寫法見 targets.multi-host.example/。
+# 主機增減時只改清單，不改這個檔（清單的變動不必重新載入）；多台主機的清單寫法見 targets.multi-host.example/。
 global:
   scrape_interval: 15s
   evaluation_interval: 15s

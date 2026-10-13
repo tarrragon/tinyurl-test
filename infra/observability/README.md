@@ -113,7 +113,7 @@ SQL
 | 被監控的主機 | `docker-compose.yml:compose.exporters-published.yml` | `EXPORTER_BIND_ADDR`：這台的私有網路位址，exporter 的連接埠只開在這個位址上，再用防火牆或 security group 限制只有監控主機能連（exporter 沒有認證） |
 | 監控主機 | `compose.monitoring.yml` | `prometheus/targets/` 換成全部主機的清單 |
 
-**讀哪些主機寫在清單裡**：`prometheus/targets/` 每個 job 一個檔（file_sd），每個目標帶 `host` 標籤，代表它回報的是哪台主機；單機時全部是 `app-1`，多台主機的寫法在 `prometheus/targets.multi-host.example/`。清單由部署工具從主機清單產生，Prometheus 每 30 秒重讀，改了不必重新載入。清單同時是「預期要有哪些主機」的來源：一台主機停掉時它仍在清單上，`up` 變成 0，由 `ScrapeTargetDown` 依 `host` 各自成立；清單整個空了由 `HostTargetsMissing` 處理。改用雲端的服務發現（例如 `ec2_sd_configs`）時，主機被刪掉會從清單上消失、`up` 序列跟著消失，那時要另外比對預期的主機數。
+**讀哪些主機寫在清單裡**：`prometheus/targets/` 每個 job 一個檔（file_sd），每個目標帶 `host` 標籤，代表它回報的是哪台主機；單機時全部是 `app-1`，多台主機的寫法在 `prometheus/targets.multi-host.example/`。清單由部署工具從主機清單產生，Prometheus 監看這些檔案，存檔後幾秒內生效，不必重新載入（`refresh_interval: 30s` 是監看失效時的備援）。清單同時是「預期要有哪些主機」的來源：一台主機停掉時它仍在清單上，`up` 變成 0，由 `ScrapeTargetDown` 依 `host` 各自成立；清單整個空了由 `HostTargetsMissing` 處理。改用雲端的服務發現（例如 `ec2_sd_configs`）時，主機被刪掉會從清單上消失、`up` 序列跟著消失，那時要另外比對預期的主機數。
 
 **面板與告警都依主機分開**：面板頂端的「主機」下拉選單篩選 `host`，每條線的圖例前面是主機名稱；告警的分組（`group_by: [alertname, host]`）、抑制（`equal: [host]`）、`ContainerStopped` 與 `HostDiskLow` 的聚合都保留 `host`。
 
