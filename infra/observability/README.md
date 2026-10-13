@@ -8,7 +8,90 @@
 | Grafana | 13.2.3 | `http://127.0.0.1:${GRAFANA_PORT:-3000}`，帳號 `admin`、密碼是 `.env` 的 `GRAFANA_ADMIN_PASSWORD` |
 | Alertmanager | 0.34.1 | `http://127.0.0.1:${ALERTMANAGER_PORT:-9093}`，看目前成立與被抑制的告警 |
 
-兩者只綁 `127.0.0.1`，不對外開放。後台的 `/admin/ops` 之後連到 Grafana（見 [docs/api.md](../../docs/api.md)〈前端的頁面路由〉）時，再決定經過入口 Nginx 的存取方式。
+三者只綁 `127.0.0.1`，不對外開放。後台的 `/admin/ops` 之後連到 Grafana（見 [docs/api.md](../../docs/api.md)〈前端的頁面路由〉）時，再決定經過入口 Nginx 的存取方式。
+
+## 使用
+
+### 啟動與停止
+
+監控的服務和應用服務在同一個 compose 專案裡，`.env` 的 `COMPOSE_FILE`（預設 `docker-compose.yml:compose.host-exporters.yml:compose.monitoring.yml`）讓 `docker compose` 一次讀到三個檔：
+
+```sh
+cp .env.example .env    # 第一次：改掉 GRAFANA_ADMIN_PASSWORD、POSTGRES_EXPORTER_PASSWORD 的 change-me
+docker compose up -d    # 全部起來，含監控
+# 只起監控（應用服務已經在跑時）
+docker compose up -d prometheus alertmanager grafana node-exporter cadvisor postgres-exporter valkey-exporter nginx-exporter
+# 只停監控，應用服務不受影響
+docker compose stop prometheus alertmanager grafana
+```
+
+資料存在兩個具名 volume：`promdata`（Prometheus 的時間序列，保留 15 天）與 `grafanadata`（Grafana 的使用者、密碼與介面上的設定）。`docker compose down` 會留下它們；`docker compose down -v` 會一起刪掉，下次起來是空的 Prometheus 與初始的 Grafana 帳號。
+
+### 檔案在哪裡、改了怎麼生效
+
+| 要改的 | 檔案 | 改完怎麼生效 |
+| --- | --- | --- |
+| 讀哪些 exporter（讀取清單） | `prometheus/targets/<job>.yml` | 存檔後幾秒內生效，不必重新載入 |
+| 讀取設定、新增一個 job | `prometheus/prometheus.yml` | `curl -X POST http://127.0.0.1:9090/-/reload` |
+| 告警規則 | `prometheus/rules/alerts.yml`，測試在 `prometheus/tests/alerts.test.yml` | 先跑測試，再 `curl -X POST http://127.0.0.1:9090/-/reload` |
+| 告警的分組、抑制、通知管道 | `alertmanager/alertmanager.yml` | `curl -X POST http://127.0.0.1:9093/-/reload` |
+| 面板 | `grafana/dashboards/resources.json` | 存檔後約 10 秒 Grafana 自己重讀 |
+| Grafana 的資料來源 | `grafana/provisioning/datasources/prometheus.yml` | `docker compose restart grafana` |
+| 各服務的映像版本、掛載、連接埠 | `compose.monitoring.yml`、`compose.host-exporters.yml`、`docker-compose.yml` | `docker compose up -d <服務>`（compose 判定定義變了才重建） |
+
+設定檔都是以整個目錄唯讀掛進容器，改的是主機上 repo 裡的檔案。重新載入之後，在 Prometheus 的 Status → Configuration、Alertmanager 的 `GET /api/v2/status` 確認載入的是新內容；語法錯的設定會被拒絕，程式繼續用舊的，所以先檢查：
+
+```sh
+docker compose exec prometheus promtool check config /etc/prometheus/prometheus.yml   # 讀取設定與規則
+docker compose exec alertmanager amtool check-config /etc/alertmanager/alertmanager.yml
+# 告警規則的單元測試（在 repo 根目錄跑）
+docker run --rm -v "$PWD/infra/observability/prometheus:/p" -w /p/tests \
+  --entrypoint promtool prom/prometheus:v3.15.0 test rules alerts.test.yml
+```
+
+### 各網頁看什麼
+
+- **Grafana**（`http://127.0.0.1:3000`）：以 `admin` 和 `.env` 的 `GRAFANA_ADMIN_PASSWORD` 登入，面板在 Dashboards 的 `tinyurl` 資料夾，名稱「tinyurl 資源與流量」。頂端的「主機」選單篩選 `host`，單機時只有 `app-1`。面板由上而下是：各 exporter 讀不讀得到、每個服務的 CPU／記憶體／網路與被限流的時間、距離上次被 cAdvisor 看到的秒數、主機的 CPU 與 load、磁碟剩餘比例、PostgreSQL、Valkey、入口 Nginx。
+- **Prometheus**（`http://127.0.0.1:9090`）：Status → Targets 看每個讀取對象的狀態與最後一次的錯誤訊息；Alerts 看每條規則現在是 inactive、pending（條件成立、還在等 `for`）還是 firing；Query 頁可以直接打 PromQL，寫規則時把比較運算子拿掉貼進來，看每個序列目前的值。
+- **Alertmanager**（`http://127.0.0.1:9093`）：目前送進來的告警，以及哪些被抑制。還沒有通知管道，告警只在這裡看得到。
+- **Gatus**（`http://localhost:8090`）：各服務從外部探測通不通，見 [infra/monitoring](../monitoring/README.md)。
+
+三個監控網頁只綁 `127.0.0.1`，從別台電腦連不到；Gatus 綁全部介面。
+
+### 常見操作
+
+**暫時壓下一則告警**（例如維護時）：在 Alertmanager 的網頁按 New Silence，或用指令：
+
+```sh
+docker compose exec alertmanager amtool --alertmanager.url=http://localhost:9093 \
+  silence add alertname=HostCpuSaturated host=app-1 --duration=2h --comment="維護"
+```
+
+**新增一個 exporter**：在 `docker-compose.yml`（跟著服務走的）或 `compose.host-exporters.yml`（每台主機都要的）加服務；在 `prometheus/targets/` 新增一個清單檔，每個讀取對象帶 `host`；在 `prometheus.yml` 加一個指向它的 `file_sd_configs` job，然後重新載入 Prometheus。已有的 job 多讀一個對象時，只改清單檔。
+
+**改面板**：`allowUiUpdates: false`，被佈建的面板在介面上不能儲存。在介面上調好之後，用面板的 Export 匯出 JSON，蓋掉 `grafana/dashboards/resources.json`，Grafana 約 10 秒後重讀；只在介面上改而不匯出的，重新整理就不見了。
+
+**改 Grafana 的 admin 密碼**：`GRAFANA_ADMIN_PASSWORD` 只在 `grafanadata` 第一次建立時生效，之後改 `.env` 不會改到登入密碼。用介面改，或：
+
+```sh
+docker compose exec grafana grafana cli admin reset-admin-password <新密碼>
+```
+
+**接通知管道**：在 `alertmanager.yml` 的 `receivers` 底下加 webhook 或 email 的設定，把 `route.receiver` 指向它，重新載入 Alertmanager。
+
+### 排錯
+
+| 看到的狀況 | 先查 |
+| --- | --- |
+| Targets 頁某個對象是 DOWN，錯誤是 `context deadline exceeded` | 讀取逾時（10 秒），多半是主機忙：在 Mac 上跑 `uptime`，load 遠高於核心數時，等負載降下來再看 |
+| Targets 頁某個對象是 DOWN，錯誤是 `connection refused` 或 `no such host` | 那個 exporter 的容器沒在跑：`docker compose ps` |
+| 對象都是 UP，面板上資料庫或快取的圖是空的 | exporter 連不到它監控的服務：查 `pg_up`、`redis_up`、`nginx_up` 是不是 0 |
+| 每個服務的 CPU、記憶體圖都是空的 | cAdvisor 沒取得容器名稱，見下方〈cAdvisor 讀不到容器名稱時〉 |
+| 改了規則或 `alertmanager.yml` 沒有效果 | 有沒有重新載入、載入的是不是新內容（見〈檔案在哪裡、改了怎麼生效〉） |
+| Grafana 登入說密碼錯 | 密碼以 `grafanadata` 第一次建立時的為準，見〈常見操作〉的改密碼 |
+| 面板選了時間範圍卻沒有資料 | 頂端的「主機」選單、時間範圍是否超過 15 天的保留期 |
+| 一排告警同時成立（`HostCpuSaturated`、`ScrapeNearTimeout`、`ScrapeTargetDown`） | 多半是 Mac 本身過載，虛擬機與容器一起變慢，見〈在 macOS 上跑時看不到 Mac 本身〉 |
+| `HostDiskLow` 對 `device="mac"` 成立 | Mac 本機的磁碟真的快滿了（那一顆的位元組數放大 256 倍，但比例是對的），見〈在 macOS 上跑時看不到 Mac 本身〉的磁碟一項 |
 
 ## 各層的 exporter 與它看不到的範圍
 

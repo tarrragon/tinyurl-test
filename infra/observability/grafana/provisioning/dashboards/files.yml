@@ -1,4 +1,5 @@
-# 面板定義放在 infra/observability/grafana/dashboards/，以檔案為準；在介面上改的不會寫回檔案
+# 面板定義放在 infra/observability/grafana/dashboards/，以檔案為準；allowUiUpdates: false 讓被佈建的面板在介面上不能儲存，
+# 要改就在介面上調好後匯出 JSON 蓋掉檔案（兩種設定都不會把介面上的修改寫回檔案）
 apiVersion: 1
 providers:
   - name: tinyurl

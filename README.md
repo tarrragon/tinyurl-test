@@ -54,6 +54,8 @@
 | [infra/nginx/](infra/nginx/README.md)      | 反向代理、負載平衡、限流                                |
 | [infra/cache/](infra/cache/README.md)      | 快取伺服器 Valkey，以及選型時的比較                     |
 | [infra/postgres/](infra/postgres/README.md) | 主資料庫 PostgreSQL、初始化腳本                        |
+| [infra/monitoring/](infra/monitoring/README.md) | 服務活著沒有：容器 healthcheck、Gatus 外部探測、`scripts/health.sh` |
+| [infra/observability/](infra/observability/README.md) | 流量與資源監控：Prometheus、Alertmanager、Grafana 與各層 exporter 的使用、設定與排錯 |
 | [loadtest/](loadtest/README.md)            | 壓測情境、測試資料與結果紀錄                            |
 | [docs/](docs/)                             | 跨元件的設計文件：[系統設計](docs/system-design.md)（需求、容量估算、短碼、資料模型）、[API 與路由規格](docs/api.md)、[開發順序](docs/roadmap.md)、[CI 設計](docs/ci.md)、[服務監看](infra/monitoring/README.md)、[登入與權限](docs/auth-and-roles.md) |
 
@@ -65,6 +67,8 @@
 cp .env.example .env
 docker compose up -d postgres cache   # 目前只有這兩個起得來
 ```
+
+`.env` 的 `COMPOSE_FILE` 讓 `docker compose` 同時讀 `docker-compose.yml`（應用服務與跟著服務走的 exporter）、`compose.host-exporters.yml`（主機與容器的 exporter）與 `compose.monitoring.yml`（Prometheus、Alertmanager、Grafana）。監控起來之後的網址、帳號與日常操作見 [infra/observability](infra/observability/README.md)〈使用〉，服務探測見 [infra/monitoring](infra/monitoring/README.md)。
 
 ## 待決定
 
