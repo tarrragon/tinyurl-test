@@ -4,14 +4,16 @@
 #   docker run --rm -v "$PWD/infra/observability/alertmanager:/a" --entrypoint amtool prom/alertmanager:v0.34.1 check-config /a/alertmanager.yml
 route:
   receiver: none
-  group_by: [alertname]
+  # 依主機分組：同一台主機的同一種告警合成一則，不同主機各自一則
+  group_by: [alertname, host]
 receivers:
   - name: none
 
 inhibit_rules:
   # 主機飽和時，讀取變慢與各服務變慢是它造成的症狀，不另外通知。
-  # 只抑制不通知值班的症狀（warning）；會通知值班的症狀不抑制。單機時 route 的 group_by: [alertname] 與依主機分組效果相同，
-  # 多台主機時 group_by 加 host，同一台主機的症狀合成一則通知（代價：同一台主機上無關的告警也併進來）。
-  # 單機所以沒有 equal；多台主機時替每個讀取對象加 host 標籤，這裡寫 equal: [host]（instance 是讀取對象的位址，不是主機）
+  # 只抑制不通知值班的症狀（warning）；會通知值班的症狀不抑制。
+  # equal: [host]：一台主機飽和只壓下同一台主機上的症狀。host 標籤由 prometheus/targets/ 的清單加上，
+  # instance 不能代替它（instance 是讀取對象的位址，同一台主機上每個 exporter 都不同）
   - source_matchers: [alertname="HostCpuSaturated"]
     target_matchers: [alertname=~"ScrapeNearTimeout|ProbeSlow|ServiceSlow", severity="warning"]
+    equal: [host]

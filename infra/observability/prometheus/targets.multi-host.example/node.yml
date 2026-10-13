@@ -1,0 +1,6 @@
+- targets: ["10.0.1.11:9100"]
+  labels: {host: app-1}
+- targets: ["10.0.1.12:9100"]
+  labels: {host: app-2}
+- targets: ["10.0.1.21:9100"]
+  labels: {host: db-1}

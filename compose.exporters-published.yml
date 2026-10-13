@@ -1,0 +1,22 @@
+# 多台主機時，被監控的主機加上這個檔：exporter 的連接埠開在 EXPORTER_BIND_ADDR（這台主機的私有網路位址），
+# 讓監控主機上的 Prometheus 連得到。只綁私有位址，再用防火牆或 security group 限制只有監控主機能連：
+# exporter 沒有認證，連得到的人就讀得到主機與服務的全部指標。
+#   EXPORTER_BIND_ADDR=<這台主機的私有位址> docker compose -f docker-compose.yml -f compose.exporters-published.yml up -d
+# 這台主機沒有跑某個服務時（例如資料庫在另一台），對應的 exporter 也不在這台跑，見 README〈多台主機〉。
+
+services:
+  node-exporter:
+    ports:
+      - "${EXPORTER_BIND_ADDR:?設成這台主機的私有網路位址}:9100:9100"
+  cadvisor:
+    ports:
+      - "${EXPORTER_BIND_ADDR:?設成這台主機的私有網路位址}:8080:8080"
+  postgres-exporter:
+    ports:
+      - "${EXPORTER_BIND_ADDR:?設成這台主機的私有網路位址}:9187:9187"
+  valkey-exporter:
+    ports:
+      - "${EXPORTER_BIND_ADDR:?設成這台主機的私有網路位址}:9121:9121"
+  nginx-exporter:
+    ports:
+      - "${EXPORTER_BIND_ADDR:?設成這台主機的私有網路位址}:9113:9113"

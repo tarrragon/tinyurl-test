@@ -1,0 +1,4 @@
+- targets: ["10.0.1.11:9113"]
+  labels: {host: app-1}
+- targets: ["10.0.1.12:9113"]
+  labels: {host: app-2}

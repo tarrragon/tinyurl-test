@@ -1,4 +1,6 @@
 # Prometheus 的讀取清單：每 15 秒到各個 exporter 讀一次。各層看得到與看不到的範圍見 infra/observability/README.md。
+# 讀哪些主機寫在 targets/ 的清單裡（file_sd），每個目標帶 host 標籤，代表它回報的是哪台主機。
+# 主機增減時只改清單，不改這個檔；多台主機的清單寫法見 targets.multi-host.example/。
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -12,38 +14,55 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
+  # 監控主機自己的元件與 Prometheus 在同一個 compose 專案，用服務名稱連。host 填監控主機的名稱：
+  # 單機時與被監控的主機是同一台，填 app-1；多台主機時改成監控主機的名稱（例如 monitor-1）
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
-
-  # 每個容器的 CPU、記憶體、網路與磁碟讀寫（讀 cgroup）
-  - job_name: cadvisor
-    static_configs:
-      - targets: ["cadvisor:8080"]
-
-  # 主機的 CPU、記憶體、load 與磁碟；在 macOS 的 Docker 上看到的是 Docker 的虛擬機，不是 Mac
-  - job_name: node
-    static_configs:
-      - targets: ["node-exporter:9100"]
-
-  - job_name: postgres
-    static_configs:
-      - targets: ["postgres-exporter:9187"]
-
-  - job_name: valkey
-    static_configs:
-      - targets: ["valkey-exporter:9121"]
-
-  # 入口 Nginx 的連線數與累計請求數（讀 stub_status）
-  - job_name: nginx
-    static_configs:
-      - targets: ["nginx-exporter:9113"]
-
-  # Gatus 的外部探測結果
-  - job_name: gatus
-    static_configs:
-      - targets: ["gatus:8080"]
+        labels: {host: app-1}
 
   - job_name: alertmanager
     static_configs:
       - targets: ["alertmanager:9093"]
+        labels: {host: app-1}
+
+  # 每個容器的 CPU、記憶體、網路與磁碟讀寫（讀 cgroup）
+  - job_name: cadvisor
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/cadvisor.yml]
+        refresh_interval: 30s
+
+  # 主機的 CPU、記憶體、load 與磁碟；在 macOS 的 Docker 上看到的是 Docker 的虛擬機，不是 Mac
+  - job_name: node
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/node.yml]
+        refresh_interval: 30s
+
+  - job_name: postgres
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/postgres.yml]
+        refresh_interval: 30s
+
+  - job_name: valkey
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/valkey.yml]
+        refresh_interval: 30s
+
+  # 入口 Nginx 的連線數與累計請求數（讀 stub_status）
+  - job_name: nginx
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/nginx.yml]
+        refresh_interval: 30s
+
+  # Gatus 的外部探測結果。清單上的 host 是 Gatus 所在的主機；探測結果代表的是被探測的端點，
+  # 所以把 gatus_results_* 的 host 改寫成端點所在的主機。單機時都在 app-1；
+  # 服務分到多台主機時，依端點名稱（name 標籤）各寫一條，例如 name 符合 "PostgreSQL|Valkey" 的改成 db-1
+  - job_name: gatus
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/gatus.yml]
+        refresh_interval: 30s
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: gatus_results_.+
+        target_label: host
+        replacement: app-1

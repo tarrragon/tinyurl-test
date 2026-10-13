@@ -80,27 +80,51 @@ SQL
 
 ## 告警
 
-規則在 `prometheus/rules/alerts.yml`，分組與抑制在 `alertmanager/alertmanager.yml`。改完先檢查語法（指令寫在兩個檔案的開頭），再 `curl -X POST http://127.0.0.1:9090/-/reload` 讓 Prometheus 重新載入；Alertmanager 的設定改了要重啟它。
+規則在 `prometheus/rules/alerts.yml`，分組與抑制在 `alertmanager/alertmanager.yml`。改完先檢查語法（指令寫在兩個檔案的開頭），再 `curl -X POST http://127.0.0.1:9090/-/reload` 讓 Prometheus 重新載入，Alertmanager 同樣打 `curl -X POST http://127.0.0.1:9093/-/reload`。設定檔掛載的路徑沒變時，`docker compose up -d` 不會重建容器，不重新載入就一直用舊的設定（多台主機那次改動實測過：Alertmanager 的 `equal` 改了之後沒有生效，直到重新載入）。單元測試在 `prometheus/tests/alerts.test.yml`，指令寫在檔案開頭；規則改了先跑它。
 
 | 規則 | 成立條件 | 持續 |
 | --- | --- | --- |
 | `EndpointDown` | Gatus 的探測失敗（只判斷可用性，見下） | 2 分鐘 |
-| `ContainerStopped` | 一個 compose 服務的所有容器都超過 60 秒沒被 cAdvisor 看到 | 1 分鐘 |
+| `ContainerStopped` | 一台主機上，一個 compose 服務的所有容器都超過 60 秒沒被 cAdvisor 看到（依 `host` 與服務分組） | 1 分鐘 |
 | `ScrapeTargetDown` | 15 分鐘內讀取成功的比例低於九成（`avg_over_time(up[15m])`；過載時讀取是間歇失敗，`up == 0` 加 `for` 會被打斷） | 2 分鐘 |
 | `ExporterBackendDown` | exporter 連不到它監控的服務（`pg_up`、`redis_up`、`nginx_up`） | 2 分鐘 |
 | `ScrapeNearTimeout` | 5 分鐘內讀取 exporter 的最大耗時超過 8 秒（逾時 10 秒） | 5 分鐘 |
 | `ProbeSlow` | 15 分鐘內回應超過 0.5 秒的後端探測佔兩成以上（後端輸出延遲分布之前的延遲訊號；30 次探測取分位數近於取最慢的幾次，所以看比例） | 10 分鐘 |
 | `HostCpuSaturated` | 5 分鐘平均的 load 超過核心數的 1.5 倍，或 steal 佔一成以上的 CPU 時間；成立後多撐 15 分鐘（`keep_firing_for`），症狀的時間窗退完之前抑制不解除 | 5 分鐘 |
-| `HostDiskLow` | 任一顆磁碟剩不到 10%（依裝置分組） | 10 分鐘 |
+| `HostDiskLow` | 任一顆磁碟剩不到 10%（依主機與裝置分組） | 10 分鐘 |
+| `HostTargetsMissing` | node job 沒有任何讀取目標（`targets/node.yml` 空了）；個別主機停掉由 `ScrapeTargetDown` 處理 | 5 分鐘 |
 
 - **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲改由 `ProbeSlow` 以探測回應時間在時間窗內的 p95 判斷；後端輸出延遲分布之後再加依 histogram 的 `ServiceSlow`。
 - **間歇的條件先在時間窗內聚合**：讀取耗時與讀取失敗在過載時是間歇的，原始值加 `for` 每次評估都要成立，兩次尖峰之間就被打斷。實測近 6 小時，`scrape_duration_seconds > 8` 加 `for: 5m` 沒有成立過，改成 5 分鐘內的最大值之後，cadvisor 那一組條件連續成立最長 32 分鐘。主機飽和的規則同樣如此：`node_load1` 直接加 `for` 在 12 小時裡最長連續成立 2 分鐘，改成 5 分鐘平均後最長 9 分鐘。
 - **`ContainerStopped` 用 `min`**：服務重建之後，cAdvisor 同時留著舊容器與新容器兩條序列，舊的停止前進。實測重建 `nginx-exporter` 之後 150 秒，`max` 是 161 秒（會誤報），`min` 是 10 秒。
-- **抑制**：`HostCpuSaturated` 成立時壓下 warning 級的 `ScrapeNearTimeout`、`ProbeSlow`（之後也壓 `ServiceSlow`）；會通知值班的症狀不抑制。它算的是虛擬機的 load 與 steal，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。單機所以沒有 `equal`；多台主機時替每個讀取對象加主機標籤，`instance` 是讀取對象的位址、不是主機。
+- **抑制**：`HostCpuSaturated` 成立時壓下 warning 級的 `ScrapeNearTimeout`、`ProbeSlow`（之後也壓 `ServiceSlow`）；會通知值班的症狀不抑制。它算的是虛擬機的 load 與 steal，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。抑制規則寫 `equal: [host]`，一台主機飽和只壓下同一台主機上的症狀；`host` 標籤由 `prometheus/targets/` 的清單加上（`instance` 是讀取對象的位址，同一台主機上每個 exporter 都不同，不能代替它）。
 - **Watchdog 與主機外的訊號還沒做**：開發環境沒有主機外的機器與外部的心跳服務，Prometheus 自己停掉時沒有人知道；部署到正式環境時要補。
 - **通知管道還沒設**：告警只在 Alertmanager 的頁面上看得到。要通知時在 `alertmanager.yml` 加 receiver（例如 webhook、email），並決定誰會收到、多久內要回應。
 
 第一次接上時的驗收：停掉 `portal` 約 3.5 分鐘後，`EndpointDown`（前台）與 `ContainerStopped`（portal）成立並送到 Alertmanager；對 Alertmanager 送入合成的 `HostCpuSaturated` 與 `ScrapeNearTimeout`，後者的狀態是 `suppressed`；`HostDiskLow` 對 Mac 的磁碟（剩 2.4%）成立。
+
+## 多台主機
+
+監控的元件分成兩組：每台主機都要跑的 exporter（node_exporter、cAdvisor，以及跟著服務走的 postgres_exporter、redis_exporter、nginx-prometheus-exporter）在 `docker-compose.yml`；只在監控主機跑的 Prometheus、Alertmanager、Grafana 在 `compose.monitoring.yml`。三種主機各自用 `.env` 的 `COMPOSE_FILE` 決定讀哪些檔：
+
+| 主機 | `COMPOSE_FILE` | 另外要設 |
+| --- | --- | --- |
+| 單機（服務與監控在同一台） | `docker-compose.yml:compose.monitoring.yml` | 無 |
+| 被監控的主機 | `docker-compose.yml:compose.exporters-published.yml` | `EXPORTER_BIND_ADDR`：這台的私有網路位址，exporter 的連接埠只開在這個位址上，再用防火牆或 security group 限制只有監控主機能連（exporter 沒有認證） |
+| 監控主機 | `compose.monitoring.yml` | `prometheus/targets/` 換成全部主機的清單 |
+
+**讀哪些主機寫在清單裡**：`prometheus/targets/` 每個 job 一個檔（file_sd），每個目標帶 `host` 標籤，代表它回報的是哪台主機；單機時全部是 `app-1`，多台主機的寫法在 `prometheus/targets.multi-host.example/`。清單由部署工具從主機清單產生，Prometheus 每 30 秒重讀，改了不必重新載入。清單同時是「預期要有哪些主機」的來源：一台主機停掉時它仍在清單上，`up` 變成 0，由 `ScrapeTargetDown` 依 `host` 各自成立；清單整個空了由 `HostTargetsMissing` 處理。改用雲端的服務發現（例如 `ec2_sd_configs`）時，主機被刪掉會從清單上消失、`up` 序列跟著消失，那時要另外比對預期的主機數。
+
+**面板與告警都依主機分開**：面板頂端的「主機」下拉選單篩選 `host`，每條線的圖例前面是主機名稱；告警的分組（`group_by: [alertname, host]`）、抑制（`equal: [host]`）、`ContainerStopped` 與 `HostDiskLow` 的聚合都保留 `host`。
+
+**驗證**（在同一台 Mac 上另外跑一個 node_exporter 當作 host-b，經由 `host.docker.internal` 的連接埠讀它，模擬跨主機的讀取）：清單加上 host-b 之後 13 秒出現在 Targets 頁面，沒有重新載入；停掉 host-b 的 exporter，2 分 21 秒後 `ScrapeTargetDown{host="host-b"}` 成立，app-1 的不受影響；對 Alertmanager 送入合成的 `HostCpuSaturated{host="host-b"}` 與兩則 `ScrapeNearTimeout`（host-b、host-c），只有 host-b 的那則被抑制。規則的單元測試涵蓋同一個服務在兩台主機時只有停掉的那台成立、一台主機停掉時只對它成立、清單空了時成立；把 `ContainerStopped` 的 `host` 從分組拿掉，測試會失敗。host-b 的資料其實來自同一台虛擬機，所以這次驗的是標籤、清單與規則的機制，不是兩台主機的數字。
+
+**還沒做**：
+
+- **服務本身還沒拆到多台**：`docker-compose.yml` 仍把全部服務放在一起；資料庫與快取放到另一台時，要依主機的角色拆出各自的 compose 檔，exporter 跟著它監控的服務走（範例清單的 db-1 就是這種配置）。
+- **Gatus**：它以 compose 的服務名稱探測同一台上的服務，服務分到多台時探測網址要改成各主機的位址，並移到被監控的主機以外；`prometheus.yml` 裡把探測結果的 `host` 改寫成端點所在主機的那一條，要依端點名稱分開寫。
+- **exporter 的 TLS 與認證**：目前靠「只綁私有位址＋防火牆」限制誰能讀；跨不可信的網段時，要在 exporter 前面加 TLS 與 basic auth（exporter-toolkit 的 `--web.config.file`），Prometheus 的讀取設定加對應的 `tls_config` 與 `basic_auth`。
+- **Watchdog 與主機外的訊號**：同〈告警〉。
 
 ## 讀數字時
 

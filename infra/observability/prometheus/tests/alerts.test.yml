@@ -1,0 +1,65 @@
+# 告警規則的單元測試：用合成的時間序列確認規則在多台主機時依 host 分開成立。
+#   docker run --rm -v "$PWD/infra/observability/prometheus:/p" -w /p/tests --entrypoint promtool prom/prometheus:v3.15.0 test rules alerts.test.yml
+rule_files:
+  - ../rules/alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 同一個服務跑在兩台主機上，app-2 的容器停了：只有 app-2 那一則成立，app-1 的值不會把它蓋掉
+  - interval: 1m
+    input_series:
+      - series: 'container_last_seen{host="app-1", container_label_com_docker_compose_service="go"}'
+        values: '0+60x10'
+      - series: 'container_last_seen{host="app-2", container_label_com_docker_compose_service="go"}'
+        values: '0+60x2 120x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ContainerStopped
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              scope: service
+              host: app-2
+              container_label_com_docker_compose_service: go
+            exp_annotations:
+              summary: "app-2 上的 go 已有 4m 0s 沒被 cAdvisor 看到"
+
+  # 一台主機停掉：它仍在清單上、up 是 0，ScrapeTargetDown 只對那一台成立
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node", instance="10.0.1.11:9100", host="app-1"}'
+        values: '1x20'
+      - series: 'up{job="node", instance="10.0.1.12:9100", host="app-2"}'
+        values: '1x5 0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ScrapeTargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              scope: monitoring
+              job: node
+              instance: 10.0.1.12:9100
+              host: app-2
+            exp_annotations:
+              summary: "Prometheus 連不到 app-2 的 node（10.0.1.12:9100）"
+      - eval_time: 12m
+        alertname: HostTargetsMissing
+        exp_alerts: []
+
+  # 清單空了：node job 沒有任何 up 序列
+  - interval: 1m
+    input_series:
+      - series: 'up{job="postgres", instance="postgres-exporter:9187", host="db-1"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: HostTargetsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              scope: monitoring
+              job: node
+            exp_annotations:
+              summary: "node job 沒有任何讀取目標，檢查 targets/node.yml"

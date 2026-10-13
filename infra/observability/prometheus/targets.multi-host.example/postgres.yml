@@ -1,0 +1,2 @@
+- targets: ["10.0.1.21:9187"]
+  labels: {host: db-1}

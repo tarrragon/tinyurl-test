@@ -1,0 +1,6 @@
+# postgres_exporter：host 是資料庫所在的主機
+# Prometheus 每隔一段時間重讀這個檔，改了不必重新載入。host 是這個 exporter 所在、也就是它回報的那台主機；
+# 單機時全部是 app-1。多台主機的寫法見 ../targets.multi-host.example/。
+- targets: ["postgres-exporter:9187"]
+  labels:
+    host: app-1

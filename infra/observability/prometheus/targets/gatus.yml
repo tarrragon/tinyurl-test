@@ -1,0 +1,5 @@
+# Gatus：從外部探測各服務。這裡的 host 是 Gatus 自己所在的主機；探測結果的 host 改寫成被探測端點所在的主機，
+# 在 prometheus.yml 的 gatus job 用 metric_relabel_configs 做。多台主機時 Gatus 放在被監控的主機以外。
+- targets: ["gatus:8080"]
+  labels:
+    host: app-1

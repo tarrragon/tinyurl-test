@@ -17,15 +17,16 @@ groups:
 
       # 容器停了：cAdvisor 在容器停掉之後仍輸出最後的值，序列不會消失，
       # 看 container_last_seen 有沒有停止前進。用 min：同一個服務重建後會有新舊兩個容器，
-      # 舊的那個停止前進，新的仍在前進，取最小值才不會在重建時誤報
+      # 舊的那個停止前進，新的仍在前進，取最小值才不會在重建時誤報。
+      # 依 host 分開：同一個服務跑在兩台主機上時，一台停掉而另一台還在，不分開會被另一台的值蓋掉
       - alert: ContainerStopped
-        expr: min by (container_label_com_docker_compose_service) (time() - container_last_seen{container_label_com_docker_compose_service!=""}) > 60
+        expr: min by (host, container_label_com_docker_compose_service) (time() - container_last_seen{container_label_com_docker_compose_service!=""}) > 60
         for: 1m
         labels:
           severity: critical
           scope: service
         annotations:
-          summary: "{{ $labels.container_label_com_docker_compose_service }} 已有 {{ $value | humanizeDuration }} 沒被 cAdvisor 看到"
+          summary: "{{ $labels.host }} 上的 {{ $labels.container_label_com_docker_compose_service }} 已有 {{ $value | humanizeDuration }} 沒被 cAdvisor 看到"
 
   - name: latency
     rules:
@@ -52,7 +53,7 @@ groups:
           severity: warning
           scope: monitoring
         annotations:
-          summary: "Prometheus 連不到 {{ $labels.job }}（{{ $labels.instance }}）"
+          summary: "Prometheus 連不到 {{ $labels.host }} 的 {{ $labels.job }}（{{ $labels.instance }}）"
 
       # exporter 連得到，但它連不到它監控的服務（up 照樣是 1）
       - alert: ExporterBackendDown
@@ -62,7 +63,19 @@ groups:
           severity: warning
           scope: monitoring
         annotations:
-          summary: "{{ $labels.job }} 的 exporter 連不到它監控的服務"
+          summary: "{{ $labels.host }} 的 {{ $labels.job }} exporter 連不到它監控的服務"
+
+      # 主機清單空了：targets/node.yml 被清空或部署工具產生了空的清單時，node job 沒有任何目標，
+      # up 序列不存在，ScrapeTargetDown 沒有序列可以判斷，所以另外檢查序列存不存在。
+      # 個別主機停掉不靠這一條：它仍在清單上，up 變成 0，由 ScrapeTargetDown 處理
+      - alert: HostTargetsMissing
+        expr: absent(up{job="node"})
+        for: 5m
+        labels:
+          severity: warning
+          scope: monitoring
+        annotations:
+          summary: "node job 沒有任何讀取目標，檢查 targets/node.yml"
 
       # 讀取耗時逼近 scrape_timeout（10 秒）：再慢下去讀取會失敗、資料出現空洞。
       # 讀取耗時是間歇的尖峰，原始值加 for 幾乎不會成立，所以先取 5 分鐘內的最大值；逾時改了 8 要跟著改
@@ -92,17 +105,17 @@ groups:
           severity: warning
           scope: host
         annotations:
-          summary: "主機飽和：load 除以核心數或 steal 的比例超過門檻（{{ $value | humanize }}）"
+          summary: "{{ $labels.host }} 主機飽和：load 除以核心數或 steal 的比例超過門檻（{{ $value | humanize }}）"
 
       # 同一顆磁碟常掛在好幾個掛載點，依裝置分組，一顆磁碟只發一則。
       # OrbStack 上 device="mac"（virtiofs）是 Mac 本機的磁碟，/dev/vdb1 是虛擬機放 Docker 資料的那一顆，
       # 兩顆的剩餘空間不同，都要涵蓋。用比例不用位元組：virtiofs 那一顆的位元組被放大 256 倍（區塊大小欄位
       # 填 1 MiB、區塊數以 4 KiB 計），比例不受影響。雲端主機的 ext4、xfs 沒有這個落差，同一條規則直接適用
       - alert: HostDiskLow
-        expr: min by (device, fstype) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"}) < 0.10
+        expr: min by (host, device, fstype) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|vfat"}) < 0.10
         for: 10m
         labels:
           severity: warning
           scope: host
         annotations:
-          summary: "磁碟 {{ $labels.device }}（{{ $labels.fstype }}）剩 {{ $value | humanizePercentage }}"
+          summary: "{{ $labels.host }} 的磁碟 {{ $labels.device }}（{{ $labels.fstype }}）剩 {{ $value | humanizePercentage }}"

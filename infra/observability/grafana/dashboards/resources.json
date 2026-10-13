@@ -70,8 +70,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "up",
-          "legendFormat": "{{job}}",
+          "expr": "up{host=~\"$host\"}",
+          "legendFormat": "{{host}} {{job}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -125,8 +125,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=\"\"}[1m]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (host, container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=\"\", host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} {{container_label_com_docker_compose_service}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -167,8 +167,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (host, container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\", host=~\"$host\"})",
+          "legendFormat": "{{host}} {{container_label_com_docker_compose_service}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -209,8 +209,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{container_label_com_docker_compose_service!=\"\"}[1m]))",
-          "legendFormat": "收 {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (host, container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{container_label_com_docker_compose_service!=\"\", host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} 收 {{container_label_com_docker_compose_service}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -218,8 +218,8 @@
         },
         {
           "refId": "B",
-          "expr": "-sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{container_label_com_docker_compose_service!=\"\"}[1m]))",
-          "legendFormat": "送 {{container_label_com_docker_compose_service}}",
+          "expr": "-sum by (host, container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{container_label_com_docker_compose_service!=\"\", host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} 送 {{container_label_com_docker_compose_service}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -260,8 +260,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_cfs_throttled_seconds_total{container_label_com_docker_compose_service!=\"\"}[1m]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (host, container_label_com_docker_compose_service) (rate(container_cpu_cfs_throttled_seconds_total{container_label_com_docker_compose_service!=\"\", host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} {{container_label_com_docker_compose_service}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -302,8 +302,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (container_label_com_docker_compose_service) (time() - container_last_seen{container_label_com_docker_compose_service!=\"\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "max by (host, container_label_com_docker_compose_service) (time() - container_last_seen{container_label_com_docker_compose_service!=\"\", host=~\"$host\"})",
+          "legendFormat": "{{host}} {{container_label_com_docker_compose_service}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -357,8 +357,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))",
-          "legendFormat": "CPU 使用率",
+          "expr": "1 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\", host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} CPU 使用率",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -366,8 +366,8 @@
         },
         {
           "refId": "B",
-          "expr": "node_load1 / count(node_cpu_seconds_total{mode=\"idle\"})",
-          "legendFormat": "load1 ÷ 核心數",
+          "expr": "node_load1{host=~\"$host\"} / on (host) count by (host) (node_cpu_seconds_total{mode=\"idle\", host=~\"$host\"})",
+          "legendFormat": "{{host}} load1 ÷ 核心數",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -410,8 +410,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "min by (device, fstype) (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\"})",
-          "legendFormat": "{{device}}（{{fstype}}）",
+          "expr": "min by (host, device, fstype) (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\", host=~\"$host\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|vfat\", host=~\"$host\"})",
+          "legendFormat": "{{host}} {{device}}（{{fstype}}）",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -465,8 +465,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (state) (pg_stat_activity_count{datname=~\".+\"})",
-          "legendFormat": "{{state}}",
+          "expr": "sum by (host, state) (pg_stat_activity_count{datname=~\".+\", host=~\"$host\"})",
+          "legendFormat": "{{host}} {{state}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -474,8 +474,8 @@
         },
         {
           "refId": "B",
-          "expr": "pg_settings_max_connections",
-          "legendFormat": "max_connections",
+          "expr": "pg_settings_max_connections{host=~\"$host\"}",
+          "legendFormat": "{{host}} max_connections",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -516,8 +516,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(pg_stat_database_xact_commit[1m]))",
-          "legendFormat": "commit",
+          "expr": "sum by (host) (rate(pg_stat_database_xact_commit{host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} commit",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -525,8 +525,8 @@
         },
         {
           "refId": "B",
-          "expr": "sum(rate(pg_stat_database_xact_rollback[1m]))",
-          "legendFormat": "rollback",
+          "expr": "sum by (host) (rate(pg_stat_database_xact_rollback{host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} rollback",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -580,8 +580,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "used",
+          "expr": "redis_memory_used_bytes{host=~\"$host\"}",
+          "legendFormat": "{{host}} used",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -589,8 +589,8 @@
         },
         {
           "refId": "B",
-          "expr": "redis_memory_max_bytes",
-          "legendFormat": "maxmemory",
+          "expr": "redis_memory_max_bytes{host=~\"$host\"}",
+          "legendFormat": "{{host}} maxmemory",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -631,8 +631,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(redis_keyspace_hits_total[1m]) / (rate(redis_keyspace_hits_total[1m]) + rate(redis_keyspace_misses_total[1m]))",
-          "legendFormat": "hit ratio",
+          "expr": "rate(redis_keyspace_hits_total{host=~\"$host\"}[1m]) / (rate(redis_keyspace_hits_total{host=~\"$host\"}[1m]) + rate(redis_keyspace_misses_total{host=~\"$host\"}[1m]))",
+          "legendFormat": "{{host}} hit ratio",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -686,8 +686,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(nginx_http_requests_total[1m])",
-          "legendFormat": "requests/s",
+          "expr": "rate(nginx_http_requests_total{host=~\"$host\"}[1m])",
+          "legendFormat": "{{host}} requests/s",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -728,8 +728,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "nginx_connections_active",
-          "legendFormat": "active",
+          "expr": "nginx_connections_active{host=~\"$host\"}",
+          "legendFormat": "{{host}} active",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -737,8 +737,8 @@
         },
         {
           "refId": "B",
-          "expr": "nginx_connections_waiting",
-          "legendFormat": "waiting",
+          "expr": "nginx_connections_waiting{host=~\"$host\"}",
+          "legendFormat": "{{host}} waiting",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -746,5 +746,36 @@
         }
       ]
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "主機",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(up, host)",
+          "refId": "host"
+        },
+        "definition": "label_values(up, host)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "sort": 1
+      }
+    ]
+  }
 }
