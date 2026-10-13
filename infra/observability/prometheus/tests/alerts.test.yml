@@ -87,3 +87,23 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, scope: host, job: node, instance: 10.0.1.21:9100, host: db-1}
             exp_annotations: {summary: "db-1 的 node_exporter 5 分鐘內沒有一次讀取成功，主機可能停了或網路斷了"}
+
+  # 心跳沒有任何輸入也成立；通知失敗的告警依 integration 分開，10 分鐘內沒有新的失敗就不再成立
+  - interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager", host="app-1", integration="webhook", reason="other"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels: {severity: none, scope: monitoring}
+            exp_annotations: {summary: "告警鏈的心跳：Prometheus 在評估規則、Alertmanager 在送通知"}
+      - eval_time: 8m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, scope: monitoring, host: app-1, integration: webhook}
+            exp_annotations: {summary: "Alertmanager 經由 webhook 送通知失敗，10 分鐘內 1 次"}
+      - eval_time: 20m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []

@@ -1,13 +1,46 @@
-# Alertmanager：告警的分組與抑制。目前沒有設定通知管道，告警只在 Alertmanager 的頁面上看得到
-# （http://127.0.0.1:${ALERTMANAGER_PORT:-9093}）；通知管道見 infra/observability/README.md〈告警〉。
-# 改完用 amtool 檢查語法：
+# Alertmanager：告警的分組、路由、抑制與通知。通知送到 ntfy（手機推播），心跳送到外部的心跳服務；
+# 網址含私密的 topic 或 UUID，放在 secrets/（不進版本控制），範例在 secrets.example/，見 infra/observability/README.md〈通知管道〉。
+# Alertmanager 的設定檔不展開環境變數，私密值一律用 *_file 從檔案讀；檔案不存在時設定照樣載入，送通知時才失敗。
+# 改完用 amtool 檢查語法與路由：
 #   docker run --rm -v "$PWD/infra/observability/alertmanager:/a" --entrypoint amtool prom/alertmanager:v0.34.1 check-config /a/alertmanager.yml
+#   docker run --rm -v "$PWD/infra/observability/alertmanager:/a" --entrypoint amtool prom/alertmanager:v0.34.1 \
+#     config routes test --config.file=/a/alertmanager.yml severity=critical alertname=HostDown   # 印出會送到哪個 receiver
 route:
-  receiver: none
+  # 沒有被下面任何一條子路由接走的告警（warning）送到這裡
+  receiver: ntfy-warning
   # 依主機分組：同一台主機的同一種告警合成一則，不同主機各自一則
   group_by: [alertname, host]
+  # 第一則告警進來後等 30 秒再送，同一組在這段時間內陸續成立的告警合成一則通知
+  group_wait: 30s
+  # 同一組有新的告警加入或解除時，距離上次通知至少隔 5 分鐘才再送
+  group_interval: 5m
+  # 同一組沒有變化、一直成立時，隔多久再提醒一次
+  repeat_interval: 12h
+  routes:
+    # 心跳不分組、不等待，每 5 分鐘送一次到心跳服務；心跳服務的週期設 5 分鐘、寬限 5 分鐘
+    - matchers: [alertname="Watchdog"]
+      receiver: heartbeat
+      group_by: [alertname]
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+    # 要有人立刻處理的：手機以最高優先度推播（會響鈴），一直沒解除時每 2 小時再提醒
+    - matchers: [severity="critical"]
+      receiver: ntfy-critical
+      repeat_interval: 2h
+
 receivers:
-  - name: none
+  - name: ntfy-critical
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/ntfy-critical.url
+  - name: ntfy-warning
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/ntfy-warning.url
+  - name: heartbeat
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/heartbeat.url
+        # 心跳只需要「有送到」，解除的訊息（Watchdog 不會解除）不送
+        send_resolved: false
 
 inhibit_rules:
   # 主機飽和時，讀取變慢與各服務變慢是它造成的症狀，不另外通知。

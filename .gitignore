@@ -24,3 +24,6 @@ dist/
 
 # Grafana 代理的憑證與私鑰
 infra/observability/grafana-proxy/tls/
+
+# Alertmanager 通知管道的網址（含 ntfy topic、心跳服務的 UUID）
+infra/observability/alertmanager/secrets/

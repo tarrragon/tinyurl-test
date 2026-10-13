@@ -34,7 +34,7 @@ docker compose stop prometheus alertmanager grafana
 | 讀哪些 exporter（讀取清單） | `prometheus/targets/<job>.yml` | 存檔後幾秒內生效，不必重新載入 |
 | 讀取設定、新增一個 job | `prometheus/prometheus.yml` | `curl -X POST http://127.0.0.1:9090/-/reload` |
 | 告警規則 | `prometheus/rules/alerts.yml`，測試在 `prometheus/tests/alerts.test.yml` | 先跑測試，再 `curl -X POST http://127.0.0.1:9090/-/reload` |
-| 告警的分組、抑制、通知管道 | `alertmanager/alertmanager.yml` | `curl -X POST http://127.0.0.1:9093/-/reload` |
+| 告警的分組、抑制、通知管道 | `alertmanager/alertmanager.yml`；通知的網址在 `alertmanager/secrets/`（改了不必重新載入） | `curl -X POST http://127.0.0.1:9093/-/reload` |
 | 面板 | `grafana/dashboards/resources.json` | 存檔後約 10 秒 Grafana 自己重讀 |
 | Grafana 的資料來源 | `grafana/provisioning/datasources/prometheus.yml` | `docker compose restart grafana` |
 | Grafana 對外代理的網域、允許的網段 | `grafana-proxy/templates/grafana.conf.template`，值在 `.env` | `docker compose up -d grafana-proxy grafana` |
@@ -54,7 +54,7 @@ docker run --rm -v "$PWD/infra/observability/prometheus:/p" -w /p/tests \
 
 - **Grafana**（`http://127.0.0.1:3000`）：以 `admin` 和 `.env` 的 `GRAFANA_ADMIN_PASSWORD` 登入，面板在 Dashboards 的 `tinyurl` 資料夾，名稱「tinyurl 資源與流量」。頂端的「主機」選單篩選 `host`，單機時只有 `app-1`。面板由上而下是：各 exporter 讀不讀得到、每個服務的 CPU／記憶體／網路與被限流的時間、距離上次被 cAdvisor 看到的秒數、主機的 CPU 與 load、磁碟剩餘比例、PostgreSQL、Valkey、入口 Nginx。
 - **Prometheus**（`http://127.0.0.1:9090`）：Status → Targets 看每個讀取對象的狀態與最後一次的錯誤訊息；Alerts 看每條規則現在是 inactive、pending（條件成立、還在等 `for`）還是 firing；Query 頁可以直接打 PromQL，寫規則時把比較運算子拿掉貼進來，看每個序列目前的值。
-- **Alertmanager**（`http://127.0.0.1:9093`）：目前送進來的告警，以及哪些被抑制。還沒有通知管道，告警只在這裡看得到。
+- **Alertmanager**（`http://127.0.0.1:9093`）：目前送進來的告警，以及哪些被抑制；成立與解除會依嚴重度推播到 ntfy，見〈通知管道〉。
 - **Gatus**（`http://localhost:8090`）：各服務從外部探測通不通，見 [infra/monitoring](../monitoring/README.md)。
 
 三個監控網頁只綁 `127.0.0.1`，從別台電腦連不到（要從別台電腦開 Grafana，見〈從別台電腦開 Grafana〉）；Gatus 綁全部介面。
@@ -121,7 +121,7 @@ docker compose exec alertmanager amtool --alertmanager.url=http://localhost:9093
 docker compose exec grafana grafana cli admin reset-admin-password <新密碼>
 ```
 
-**接通知管道**：在 `alertmanager.yml` 的 `receivers` 底下加 webhook 或 email 的設定，把 `route.receiver` 指向它，重新載入 Alertmanager。
+**接通知管道**：見〈通知管道〉。
 
 ### 排錯
 
@@ -221,15 +221,58 @@ SQL
 | `HostDown` | 一台主機的 node_exporter 5 分鐘內沒有一次讀取成功（critical；整台停掉時 cAdvisor 的序列過期，`ContainerStopped` 不會成立） | 1 分鐘 |
 | `HostDiskLow` | 任一顆磁碟剩不到 10%（依主機與裝置分組） | 10 分鐘 |
 | `HostTargetsMissing` | node job 沒有任何讀取目標（`targets/node.yml` 空了）；個別主機停掉由 `ScrapeTargetDown` 處理 | 5 分鐘 |
+| `Watchdog` | 永遠成立（`vector(1)`），送到心跳服務，不送 ntfy | 無 |
+| `AlertmanagerNotificationsFailing` | 10 分鐘內 Alertmanager 有送通知失敗（依 `integration` 分組） | 5 分鐘 |
 
 - **可用性與延遲分開**：Gatus 對兩個後端的探測只判斷回應碼。回應時間放進條件時，主機過載讓 Laravel 回應 1 到 6 秒，探測被判失敗，而容器照樣 healthy、原因在主機。延遲改由 `ProbeSlow` 以時間窗內慢探測的比例判斷；後端輸出延遲分布之後再加依 histogram 的 `ServiceSlow`。
 - **間歇的條件先在時間窗內聚合**：讀取耗時與讀取失敗在過載時是間歇的，原始值加 `for` 每次評估都要成立，兩次尖峰之間就被打斷。實測近 6 小時，`scrape_duration_seconds > 8` 加 `for: 5m` 沒有成立過，改成 5 分鐘內的最大值之後，cadvisor 那一組條件連續成立最長 32 分鐘。主機飽和的規則同樣如此：`node_load1` 直接加 `for` 在 12 小時裡最長連續成立 2 分鐘，改成 5 分鐘平均後最長 9 分鐘。
 - **`ContainerStopped` 用 `min`**：服務重建之後，cAdvisor 同時留著舊容器與新容器兩條序列，舊的停止前進。實測重建 `nginx-exporter` 之後 150 秒，`max` 是 161 秒（會誤報），`min` 是 10 秒。
 - **抑制**：`HostCpuSaturated` 成立時壓下 warning 級的 `ScrapeNearTimeout`、`ProbeSlow`（之後也壓 `ServiceSlow`）；會通知值班的症狀不抑制。它算的是虛擬機的 load 與 steal，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。抑制規則寫 `equal: [host]`，一台主機飽和只壓下同一台主機上的症狀；`host` 標籤由 `prometheus/targets/` 的清單加上（`instance` 是讀取對象的位址，同一台主機上每個 exporter 都不同，不能代替它）。
-- **Watchdog 與主機外的訊號還沒做**：開發環境沒有主機外的機器與外部的心跳服務，Prometheus 自己停掉時沒有人知道；部署到正式環境時要補。
-- **通知管道還沒設**：告警只在 Alertmanager 的頁面上看得到。要通知時在 `alertmanager.yml` 加 receiver（例如 webhook、email），並決定誰會收到、多久內要回應。
+- **Watchdog**：永遠成立的心跳告警，每 5 分鐘送到外部的心跳服務；Prometheus、Alertmanager 或整台監控主機停掉時其他告警都送不出來，由心跳服務發現心跳停了，見〈通知管道〉。
+- **通知送不出去**：`AlertmanagerNotificationsFailing` 在 Alertmanager 10 分鐘內有送失敗時成立，見〈通知管道〉的故障一項。
 
 第一次接上時的驗收：停掉 `portal` 約 3.5 分鐘後，`EndpointDown`（前台）與 `ContainerStopped`（portal）成立並送到 Alertmanager；對 Alertmanager 送入合成的 `HostCpuSaturated` 與 `ScrapeNearTimeout`，後者的狀態是 `suppressed`；`HostDiskLow` 對 Mac 的磁碟（剩 2.4%）成立。
+
+## 通知管道
+
+告警依嚴重度送到不同的地方，路由寫在 `alertmanager/alertmanager.yml`：
+
+| 告警 | 送到 | 手機上 | 一直成立時再提醒 |
+| --- | --- | --- | --- |
+| `severity="critical"`（`EndpointDown`、`ContainerStopped`、`HostDown`） | ntfy 的 critical topic | 最高優先度（會響鈴）；解除時一般優先度 | 每 2 小時 |
+| 其餘（warning） | ntfy 的 warning topic | 一般優先度；解除時低優先度 | 每 12 小時 |
+| `Watchdog` | 心跳服務（例如 healthchecks.io） | 不推播 | 每 5 分鐘送一次，這就是心跳 |
+
+同一台主機的同一種告警合成一則通知（`group_by: [alertname, host]`）。第一則告警進來後等 30 秒才送，這段時間內陸續成立的合在一起；之後同一組有變化（新的告警加入、有告警解除）至少隔 5 分鐘才再送，所以解除的通知最晚在條件恢復後 5 分鐘左右到。
+
+**設定私密的網址**：ntfy 的 topic 名稱就是讀取權限，知道名稱的人都收得到這些通知；心跳服務的網址含有檢查項目的 UUID。兩者都不進版本控制，放在 `alertmanager/secrets/`（已列在 `.gitignore`）。Alertmanager 的設定檔不展開環境變數，所以 receiver 以 `url_file` 從這些檔案讀網址：
+
+```sh
+cp -r infra/observability/alertmanager/secrets.example infra/observability/alertmanager/secrets
+# 編輯三個檔：ntfy-*.url 的 CHANGE-ME-random-topic 換成自己的 topic（取一個猜不到的長名稱），
+# heartbeat.url 換成心跳服務給的 ping 網址。網址後面的查詢參數是 ntfy 的訊息模板，不必改
+```
+
+改這些檔案不必重新載入，Alertmanager 每次送通知時才讀檔；手機裝 ntfy 的 App 訂閱兩個 topic。心跳服務那邊把週期設 5 分鐘、寬限 5 分鐘，超過 10 分鐘沒收到就由它通知（它自己的通知管道，例如 email），這一段在監控主機以外運作。
+
+**ntfy 的訊息模板**：Alertmanager 的 webhook 送出的是固定格式的 JSON。網址後面的 `tpl=yes` 讓 ntfy 以 Go 的模板把 JSON 轉成通知：`t` 是標題（`[firing] HostDown app-2`）、`m` 是內容（成立時列出還在成立的每一則的 `summary`，解除時寫「已解除」）、`p` 是優先度（依 `status` 切換）。模板裡的欄位名是 JSON 的小寫鍵（`.status`、`.commonLabels`），和 Alertmanager 自己的模板（`.Status`、`.CommonLabels`）不同。ntfy 2.30 實測過；更舊的 ntfy 若不支援 `p` 的模板，優先度會是預設值。
+
+**改了路由之後檢查**：
+
+```sh
+# 一組標籤會送到哪個 receiver
+docker run --rm -v "$PWD/infra/observability/alertmanager:/a" --entrypoint amtool prom/alertmanager:v0.34.1 \
+  config routes test --config.file=/a/alertmanager.yml severity=critical alertname=HostDown   # ntfy-critical
+# 送一則合成的告警，看手機有沒有收到（解除時 endsAt 填現在的時間再送一次）
+curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9093/api/v2/alerts \
+  -d '[{"labels":{"alertname":"Test","host":"app-1","severity":"critical"},"annotations":{"summary":"測試通知"}}]'
+```
+
+**故障：通知送不出去**：網址錯、`secrets/` 的檔案沒放、ntfy 拒收時，Alertmanager 的日誌出現 `Notify for alerts failed`，`alertmanager_notifications_failed_total` 增加（檔案不存在時 `reason="other"`，日誌寫 `notify retry canceled due to unrecoverable error`，這一次不重試）。`AlertmanagerNotificationsFailing` 是 warning，走 warning 的 topic：critical 的管道壞掉時它送得出來；warning 的管道本身壞掉時它送不出來，只有 Alertmanager 的頁面與日誌看得到。兩個 topic 在同一個 ntfy 服務上，ntfy 整個連不上時兩者一起斷，這時只剩心跳：心跳走另一個服務，照常送達，所以這種故障沒有任何通知，要另外有一條不經過 ntfy 的路（例如心跳服務本身也檢查 ntfy）才補得上。
+
+**沒有放 `secrets/` 時**（例如剛 clone 下來的開發環境）：設定照樣載入，告警照樣出現在 Alertmanager 的頁面，只是每次送通知都失敗並寫日誌，`AlertmanagerNotificationsFailing` 跟著成立。
+
+驗證（本機起一個 ntfy 2.30 容器當作通知服務，`secrets/` 指向它）：重新載入之後 3 秒，原本已經成立的 `HostDiskLow`、`ProbeSlow` 送到 warning topic（換 receiver 之前它們送給空的 receiver，換了之後馬上補送）；停掉 `portal` 2 分 39 秒後，`EndpointDown` 與 `ContainerStopped` 以優先度 5 送到 critical topic，重新啟動之後 5 分鐘收到兩則 `[resolved]`；合成的 critical 告警成立後 30 秒送出（優先度 5），解除後 5 分鐘送出「已解除」（優先度 3）；Watchdog 兩次送達相隔 5 分 01 秒；拿掉 `ntfy-critical.url` 之後送一則 critical，Alertmanager 日誌 `notify retry canceled due to unrecoverable error`，`alertmanager_notifications_failed_total{reason="other"}` 加 1。
 
 ## 多台主機
 
@@ -252,7 +295,6 @@ SQL
 - **服務本身還沒拆到多台**：`docker-compose.yml` 仍把全部服務放在一起；資料庫與快取放到另一台時，要依主機的角色拆出各自的 compose 檔，exporter 跟著它監控的服務走（範例清單的 db-1 就是這種配置）。
 - **Gatus**：它以 compose 的服務名稱探測同一台上的服務，服務分到多台時探測網址要改成各主機的位址，並移到被監控的主機以外；`prometheus.yml` 裡把探測結果的 `host` 改寫成端點所在主機的那一條，要依端點名稱分開寫。
 - **exporter 的 TLS 與認證**：目前靠「只綁私有位址＋防火牆」限制誰能讀；跨不可信的網段時，要在 exporter 前面加 TLS 與 basic auth（exporter-toolkit 的 `--web.config.file`），Prometheus 的讀取設定加對應的 `tls_config` 與 `basic_auth`。
-- **Watchdog 與主機外的訊號**：同〈告警〉。
 
 ## 讀數字時
 

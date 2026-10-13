@@ -132,3 +132,28 @@ groups:
           scope: host
         annotations:
           summary: "{{ $labels.host }} 的磁碟 {{ $labels.device }}（{{ $labels.fstype }}）剩 {{ $value | humanizePercentage }}"
+
+  # 告警鏈本身的狀態：Prometheus 與 Alertmanager 有沒有在運作、通知送不送得出去
+  - name: alerting-pipeline
+    rules:
+      # 永遠成立的心跳。Alertmanager 每 5 分鐘把它送到外部的心跳服務（alertmanager.yml 的 heartbeat），
+      # 心跳服務一段時間沒收到就從外面通知：Prometheus、Alertmanager 或整台監控主機停掉時，
+      # 其他告警都送不出來，只有「心跳停了」這件事能從監控主機以外的地方發現
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          scope: monitoring
+        annotations:
+          summary: "告警鏈的心跳：Prometheus 在評估規則、Alertmanager 在送通知"
+
+      # Alertmanager 送通知失敗（網址錯、私密檔沒放、通知服務拒收）。這則告警走 warning 的管道，
+      # critical 的管道壞掉時它送得出來；warning 的管道本身壞掉時它送不出來，只在 Alertmanager 的頁面與日誌看得到
+      - alert: AlertmanagerNotificationsFailing
+        expr: sum by (host, integration) (increase(alertmanager_notifications_failed_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          scope: monitoring
+        annotations:
+          summary: "Alertmanager 經由 {{ $labels.integration }} 送通知失敗，10 分鐘內 {{ $value | printf \"%.0f\" }} 次"
