@@ -228,7 +228,7 @@ SQL
 - **間歇的條件先在時間窗內聚合**：讀取耗時與讀取失敗在過載時是間歇的，原始值加 `for` 每次評估都要成立，兩次尖峰之間就被打斷。實測近 6 小時，`scrape_duration_seconds > 8` 加 `for: 5m` 沒有成立過，改成 5 分鐘內的最大值之後，cadvisor 那一組條件連續成立最長 32 分鐘。主機飽和的規則同樣如此：`node_load1` 直接加 `for` 在 12 小時裡最長連續成立 2 分鐘，改成 5 分鐘平均後最長 9 分鐘。
 - **`ContainerStopped` 用 `min`**：服務重建之後，cAdvisor 同時留著舊容器與新容器兩條序列，舊的停止前進。實測重建 `nginx-exporter` 之後 150 秒，`max` 是 161 秒（會誤報），`min` 是 10 秒。
 - **抑制**：`HostCpuSaturated` 成立時壓下 warning 級的 `ScrapeNearTimeout`、`ProbeSlow`（之後也壓 `ServiceSlow`）；會通知值班的症狀不抑制。它算的是虛擬機的 load 與 steal，Mac 上的負載不會讓它成立，見〈在 macOS 上跑時看不到 Mac 本身〉。抑制規則寫 `equal: [host]`，一台主機飽和只壓下同一台主機上的症狀；`host` 標籤由 `prometheus/targets/` 的清單加上（`instance` 是讀取對象的位址，同一台主機上每個 exporter 都不同，不能代替它）。
-- **Watchdog**：永遠成立的心跳告警，每 5 分鐘送到外部的心跳服務；Prometheus、Alertmanager 或整台監控主機停掉時其他告警都送不出來，由心跳服務發現心跳停了，見〈通知管道〉。
+- **Watchdog**：永遠成立的心跳告警，每 5 分鐘送到心跳服務（[infra/heartbeat](../heartbeat/README.md)）；Prometheus、Alertmanager 或整台監控主機停掉時其他告警都送不出來，由心跳服務發現心跳停了，見〈通知管道〉。
 - **通知送不出去**：`AlertmanagerNotificationsFailing` 在 Alertmanager 10 分鐘內有送失敗時成立，見〈通知管道〉的故障一項。
 
 第一次接上時的驗收：停掉 `portal` 約 3.5 分鐘後，`EndpointDown`（前台）與 `ContainerStopped`（portal）成立並送到 Alertmanager；對 Alertmanager 送入合成的 `HostCpuSaturated` 與 `ScrapeNearTimeout`，後者的狀態是 `suppressed`；`HostDiskLow` 對 Mac 的磁碟（剩 2.4%）成立。
@@ -241,7 +241,10 @@ SQL
 | --- | --- | --- | --- |
 | `severity="critical"`（`EndpointDown`、`ContainerStopped`、`HostDown`） | ntfy 的 critical topic | 最高優先度（會響鈴）；解除時一般優先度 | 每 2 小時 |
 | 其餘（warning） | ntfy 的 warning topic | 一般優先度；解除時低優先度 | 每 12 小時 |
-| `Watchdog` | 心跳服務（例如 healthchecks.io） | 不推播 | 每 5 分鐘送一次，這就是心跳 |
+| `Watchdog` | 心跳服務的 `heartbeat` 檢查項目 | 不推播 | 每 5 分鐘送一次，這就是心跳 |
+| `AlertmanagerNotificationsFailing` | 心跳服務的 `notify-fail` 檢查項目（`/fail`），以及 ntfy 的 warning topic | 心跳服務推播（最高優先度）；warning topic 一般優先度 | 每 12 小時 |
+
+心跳服務是 [infra/heartbeat](../heartbeat/README.md) 的自架 healthchecks，心跳停了或收到 `/fail` 時由它自己推播；正式環境換成另一個失效域的服務（例如託管版 healthchecks.io），理由見那一份的〈這一份不獨立於監控主機〉。
 
 同一台主機的同一種告警合成一則通知（`group_by: [alertname, host]`）。第一則告警進來後等 30 秒才送，這段時間內陸續成立的合在一起；之後同一組有變化（新的告警加入、有告警解除）至少隔 5 分鐘才再送，所以解除的通知最晚在條件恢復後 5 分鐘左右到。
 
@@ -249,11 +252,14 @@ SQL
 
 ```sh
 cp -r infra/observability/alertmanager/secrets.example infra/observability/alertmanager/secrets
-# 編輯三個檔：ntfy-*.url 的 CHANGE-ME-random-topic 換成自己的 topic（取一個猜不到的長名稱），
-# heartbeat.url 換成心跳服務給的 ping 網址。網址後面的查詢參數是 ntfy 的訊息模板，不必改
+# 編輯 ntfy-*.url：CHANGE-ME-random-topic 換成自己的 topic（取一個猜不到的長名稱）。
+# 網址後面的查詢參數是 ntfy 的訊息模板，不必改
+infra/heartbeat/bootstrap.sh   # 起自架的心跳服務，寫入 heartbeat.url 與 notify-fail.url
 ```
 
-改這些檔案不必重新載入，Alertmanager 每次送通知時才讀檔；手機裝 ntfy 的 App 訂閱兩個 topic。心跳服務那邊把週期設 5 分鐘、寬限 5 分鐘，超過 10 分鐘沒收到就由它通知（它自己的通知管道，例如 email），這一段在監控主機以外運作。
+改這些檔案不必重新載入，Alertmanager 每次送通知時才讀檔；手機裝 ntfy 的 App 訂閱兩個 topic。用託管版 healthchecks.io 時不跑 `bootstrap.sh`，在它的網頁建兩個檢查項目：`heartbeat` 週期 5 分鐘、寬限 5 分鐘，ping 網址填進 `heartbeat.url`；`notify-fail` 用預設值，ping 網址加上 `/fail` 填進 `notify-fail.url`。
+
+**notify-fail 的路由順序**：`AlertmanagerNotificationsFailing` 先比中送到 `notify-fail` 的子路由（`continue: true`），再比中送到 `ntfy-warning` 的那一條。比中過任何子路由的告警不會回到最上層的 receiver，所以送到 warning topic 的那一份要明寫；`notify-fail` 排在它後面時永遠比不到。`send_resolved: false`：解除時送出的網址與成立時相同，送了會再記一次失敗。處理完之後把 `notify-fail` 暫停，不要送一般的 ping，見 [infra/heartbeat](../heartbeat/README.md)〈notify-fail 推播之後〉。
 
 **ntfy 的訊息模板**：Alertmanager 的 webhook 送出的是固定格式的 JSON。網址後面的 `tpl=yes` 讓 ntfy 以 Go 的模板把 JSON 轉成通知：`t` 是標題（`[firing] HostDown app-2`）、`m` 是內容（成立時列出還在成立的每一則的 `summary`，解除時寫「已解除」）、`p` 是優先度（依 `status` 切換）。模板裡的欄位名是 JSON 的小寫鍵（`.status`、`.commonLabels`），和 Alertmanager 自己的模板（`.Status`、`.CommonLabels`）不同。ntfy 2.30 實測過；更舊的 ntfy 若不支援 `p` 的模板，優先度會是預設值。
 
@@ -268,7 +274,7 @@ curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9093/api/v2/ale
   -d '[{"labels":{"alertname":"Test","host":"app-1","severity":"critical"},"annotations":{"summary":"測試通知"}}]'
 ```
 
-**故障：通知送不出去**：網址錯、`secrets/` 的檔案沒放、ntfy 拒收時，Alertmanager 的日誌出現 `Notify for alerts failed`，`alertmanager_notifications_failed_total` 增加（檔案不存在時 `reason="other"`，日誌寫 `notify retry canceled due to unrecoverable error`，這一次不重試）。`AlertmanagerNotificationsFailing` 是 warning，走 warning 的 topic：critical 的管道壞掉時它送得出來；warning 的管道本身壞掉時它送不出來，只有 Alertmanager 的頁面與日誌看得到。兩個 topic 在同一個 ntfy 服務上，ntfy 整個連不上時兩者一起斷，這時只剩心跳：心跳走另一個服務，照常送達，所以這種故障沒有任何通知，要另外有一條不經過 ntfy 的路（例如心跳服務本身也檢查 ntfy）才補得上。
+**故障：通知送不出去**：網址錯、`secrets/` 的檔案沒放、ntfy 拒收時，Alertmanager 的日誌出現 `Notify for alerts failed`，`alertmanager_notifications_failed_total` 增加（檔案不存在時 `reason="other"`，日誌寫 `notify retry canceled due to unrecoverable error`，這一次不重試）。`AlertmanagerNotificationsFailing` 同時送到心跳服務的 `/fail` 與 warning topic：warning 的管道本身壞掉時，`/fail` 不經過 ntfy 的 webhook，照常送到心跳服務，由心跳服務推播。剩下的缺口是 ntfy.sh 整個連不上：兩個 topic 一起斷，而自架的心跳服務也推播到 ntfy.sh，它記下了失敗卻送不出通知。要補就讓心跳服務多一條不經過 ntfy 的通知管道（例如 email）。
 
 **沒有放 `secrets/` 時**（例如剛 clone 下來的開發環境）：設定照樣載入，告警照樣出現在 Alertmanager 的頁面，只是每次送通知都失敗並寫日誌，`AlertmanagerNotificationsFailing` 跟著成立。
 

@@ -22,7 +22,7 @@ services:
       - ./infra/observability/prometheus:/etc/prometheus:ro
       - promdata:/prometheus
 
-  # 告警的分組與抑制；目前沒有通知管道，告警在它的頁面上看
+  # 告警的分組、抑制與通知；通知管道與心跳見 infra/observability/README.md〈通知管道〉
   alertmanager:
     image: prom/alertmanager:v0.34.1
     restart: unless-stopped

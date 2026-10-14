@@ -1,0 +1,29 @@
+# 自架的心跳監看服務（healthchecks），接收 Alertmanager 的 Watchdog 心跳與通知失敗的回報。
+# 獨立的 compose 專案，不列在 .env 的 COMPOSE_FILE 裡：停掉或重建監控堆疊時它照常運作。
+# 它與監控跑在同一台機器上時，機器整台停掉會一起停，驗得到的是心跳與 /fail 的機制，不是獨立性；
+# 正式環境要放在另一個失效域（另一個業者的主機，或託管版 healthchecks.io），見 README.md。
+#   cd infra/heartbeat && cp .env.example .env   # 第一次：填 .env，再跑 ./bootstrap.sh
+name: tinyurl-heartbeat
+
+services:
+  healthchecks:
+    image: healthchecks/healthchecks:v4.4
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${HC_SECRET_KEY:?先在 infra/heartbeat/.env 設 HC_SECRET_KEY}
+      # 網頁與通知裡的連結用這個位址
+      SITE_ROOT: http://localhost:${HC_PORT:-8000}
+      SITE_NAME: tinyurl-heartbeat
+      # localhost：瀏覽器開網頁；host.docker.internal：Alertmanager 從容器裡送 ping
+      ALLOWED_HOSTS: localhost,host.docker.internal
+      DEBUG: "False"
+      REGISTRATION_OPEN: "False"
+      # 映像以 uid 999 執行，/data 是映像裡唯一屬於它的可寫目錄
+      DB_NAME: /data/hc.sqlite
+    ports:
+      - "127.0.0.1:${HC_PORT:-8000}:8000"
+    volumes:
+      - hcdata:/data
+
+volumes:
+  hcdata:

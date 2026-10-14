@@ -1,4 +1,4 @@
-# Alertmanager：告警的分組、路由、抑制與通知。通知送到 ntfy（手機推播），心跳送到外部的心跳服務；
+# Alertmanager：告警的分組、路由、抑制與通知。通知送到 ntfy（手機推播），心跳與通知失敗送到心跳服務；
 # 網址含私密的 topic 或 UUID，放在 secrets/（不進版本控制），範例在 secrets.example/，見 infra/observability/README.md〈通知管道〉。
 # Alertmanager 的設定檔不展開環境變數，私密值一律用 *_file 從檔案讀；檔案不存在時設定照樣載入，送通知時才失敗。
 # 改完用 amtool 檢查語法與路由：
@@ -24,6 +24,15 @@ route:
       group_wait: 0s
       group_interval: 1m
       repeat_interval: 5m
+    # 通知送不出去：先送到心跳服務的 notify-fail 檢查項目（/fail），它以自己的管道推播，
+    # 不經過送失敗的那條管道。continue: true 讓這則告警繼續往下比對
+    - matchers: [alertname="AlertmanagerNotificationsFailing"]
+      receiver: notify-fail
+      continue: true
+    # 原本由最上層送到 warning topic 的那一份：比中過任何子路由的告警不會回到最上層，所以明寫。
+    # notify-fail 要排在這一條之前，排在後面永遠比不到
+    - matchers: [alertname="AlertmanagerNotificationsFailing"]
+      receiver: ntfy-warning
     # 要有人立刻處理的：手機以最高優先度推播（會響鈴），一直沒解除時每 2 小時再提醒
     - matchers: [severity="critical"]
       receiver: ntfy-critical
@@ -40,6 +49,12 @@ receivers:
     webhook_configs:
       - url_file: /etc/alertmanager/secrets/heartbeat.url
         # 心跳只需要「有送到」，解除的訊息（Watchdog 不會解除）不送
+        send_resolved: false
+  - name: notify-fail
+    webhook_configs:
+      # 檔案內容是 notify-fail 檢查項目的 ping 網址加上 /fail
+      - url_file: /etc/alertmanager/secrets/notify-fail.url
+        # 解除時送出的網址與成立時相同，送了會再記一次失敗
         send_resolved: false
 
 inhibit_rules:
