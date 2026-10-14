@@ -76,7 +76,7 @@ ssh -N -L 3000:127.0.0.1:3000 monitor-1
 
 | 變數 | 填什麼 |
 | --- | --- |
-| `GRAFANA_DOMAIN` | 開 Grafana 用的網域，DNS 指向監控主機。Grafana 的 `GF_SERVER_ROOT_URL` 由它產生，登入後的轉址與告警通知裡的連結都用這個網址 |
+| `GRAFANA_DOMAIN` | 開 Grafana 用的網域，DNS 指向監控主機。Grafana 的 `GF_SERVER_ROOT_URL` 由它產生，分享用的短網址與 OAuth 的回呼網址都用這個網址；登入前後的轉址是相對路徑，經 SSH 通道開 `127.0.0.1:3000` 的人登入後仍留在原位址 |
 | `GRAFANA_ALLOW_CIDR` | 允許連進來的網段，例如辦公室的對外 IP 加 `/32`；其他來源回 403 |
 | `GRAFANA_TLS_DIR` | 放 `fullchain.pem` 與 `privkey.pem` 的目錄。雲端上用 Let's Encrypt 這類 CA 簽發的憑證；本機測試可以自簽（見下方） |
 

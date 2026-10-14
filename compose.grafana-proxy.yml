@@ -21,6 +21,6 @@ services:
 
   grafana:
     environment:
-      # Grafana 產生的轉址、登入後回到的頁面、告警通知裡的連結都以這個網址為準；
-      # 不設的話它以 http://localhost:3000 產生，經過代理的使用者會被轉到自己電腦上的 localhost
+      # Grafana 寫出的完整網址（分享用的短網址、OAuth 的回呼網址、Grafana 自己送的告警裡的連結）以這個網址為準；
+      # 不設的話它們指向 http://localhost:3000。登入前後的轉址是相對路徑，不受這個設定影響
       GF_SERVER_ROOT_URL: https://${GRAFANA_DOMAIN}/

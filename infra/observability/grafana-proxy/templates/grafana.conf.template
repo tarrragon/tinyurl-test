@@ -20,7 +20,8 @@ server {
     deny all;
 
     location / {
-        # Grafana 依 Host 與 GF_SERVER_ROOT_URL 產生轉址與連結，Host 要原樣傳過去
+        # Grafana 比對瀏覽器送來的 Origin 與 Host，不一致時拒絕寫入的請求（實測建立資料夾回 origin not allowed），
+        # 所以 Host 要原樣傳過去
         proxy_set_header Host $host;
         proxy_pass http://grafana:3000;
     }
